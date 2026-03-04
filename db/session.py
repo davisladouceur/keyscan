@@ -11,10 +11,15 @@ from contextlib import asynccontextmanager
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL",
-    "postgresql+asyncpg://keyscan:keyscan_dev@localhost:5432/keyscan",
+# `or` catches both missing AND empty-string env var (avoids create_async_engine("") crash)
+DATABASE_URL = (
+    os.environ.get("DATABASE_URL")
+    or "postgresql+asyncpg://keyscan:keyscan_dev@localhost:5432/keyscan"
 )
+
+# Railway provisions URLs as postgresql:// — asyncpg needs postgresql+asyncpg://
+if DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
 engine = create_async_engine(
     DATABASE_URL,
