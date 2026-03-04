@@ -16,7 +16,11 @@ DATABASE_URL = os.environ.get(
     "postgresql+asyncpg://keyscan:keyscan_dev@localhost:5432/keyscan",
 )
 
-engine = create_async_engine(DATABASE_URL, echo=False)
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,
+    connect_args={"timeout": 8},   # 8s max — prevents startup hang if DB unreachable
+)
 
 _SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 

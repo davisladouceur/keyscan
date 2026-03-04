@@ -12,6 +12,7 @@ Endpoints:
   GET  /health               — Health check for deployment monitoring
 """
 
+import asyncio
 import os
 import shutil
 import uuid
@@ -66,7 +67,11 @@ async def _startup():
 
 @asynccontextmanager
 async def lifespan(app):
-    await _startup()
+    try:
+        # 20s hard cap so startup never blocks past Railway's 30s healthcheck timeout
+        await asyncio.wait_for(_startup(), timeout=20.0)
+    except asyncio.TimeoutError:
+        print("⚠ Startup initialization timed out after 20s — app starting without full init")
     yield
 
 
