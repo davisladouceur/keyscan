@@ -35,6 +35,40 @@ from api.order_manager import (
     get_review_queue,
 )
 from api.analyze_task import run_analysis
+from contextlib import asynccontextmanager
+
+
+async def _startup():
+    """Seed the database and generate calibration sheet on first boot."""
+    import sys
+    from pathlib import Path as P
+
+    # Seed key blank data (idempotent — skips rows that already exist)
+    try:
+        from db.seed import create_tables, seed_blanks
+        await create_tables()
+        await seed_blanks()
+        print("✓ Database seeded")
+    except Exception as e:
+        print(f"⚠ Database seed skipped: {e}")
+
+    # Generate calibration sheet if not already present
+    try:
+        pdf_path = P(__file__).parent.parent / "static" / "calibration_sheet.pdf"
+        if not pdf_path.exists():
+            sys.path.insert(0, str(P(__file__).parent.parent))
+            from scripts.generate_calibration_sheet import main as gen_sheet
+            gen_sheet()
+            print("✓ Calibration sheet generated")
+    except Exception as e:
+        print(f"⚠ Calibration sheet generation skipped: {e}")
+
+
+@asynccontextmanager
+async def lifespan(app):
+    await _startup()
+    yield
+
 
 # ── App setup ─────────────────────────────────────────────────────────────── #
 
@@ -42,6 +76,7 @@ app = FastAPI(
     title="KeyScan API",
     description="AI-powered key duplication — image to bitting pipeline",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
