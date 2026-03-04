@@ -13,8 +13,7 @@
 // ── State ────────────────────────────────────────────────────────────────── //
 
 let cv = null;
-let arucoDictionary = null;
-let arucoParams = null;
+let arucoDetector = null;   // cv.aruco_ArucoDetector instance (OpenCV 4.8 API)
 let feedbackInterval = null;
 let stableFrameCount = 0;
 const STABLE_FRAMES_REQUIRED = 4;   // 4 × 400ms = 1.6 seconds stable
@@ -39,12 +38,15 @@ window.detectedCorners = null;
 function onOpenCvReady() {
   cv = window.cv;
   try {
-    // OpenCV 4.8 API
-    arucoDictionary = new cv.aruco_Dictionary(cv.DICT_4X4_50);
-    arucoParams     = new cv.aruco_DetectorParameters();
+    // OpenCV 4.8 new API — all three args are required by this JS build
+    const dict         = cv.getPredefinedDictionary(cv.DICT_4X4_50);
+    const params       = new cv.aruco_DetectorParameters();
+    const refineParams = new cv.aruco_RefineParameters(10, 3.0, true);
+    arucoDetector = new cv.aruco_ArucoDetector(dict, params, refineParams);
+    console.log('ArUco detector initialised');
   } catch (e) {
-    // Fallback for slightly different API versions
-    console.warn('ArUco init fallback:', e);
+    console.warn('ArUco init error:', e);
+    arucoDetector = null;
   }
   // Notify wizard.js that OpenCV is ready
   document.dispatchEvent(new Event('opencv-ready'));
@@ -141,7 +143,7 @@ function _runFeedbackFrame(videoEl, canvasEl) {
 // ── Individual checks ─────────────────────────────────────────────────────── //
 
 function checkCalibrationSheet(gray) {
-  if (!arucoDictionary || !arucoParams) {
+  if (!arucoDetector) {
     return { status: 'warn', message: 'OpenCV loading…', corners: null };
   }
 
@@ -151,7 +153,8 @@ function checkCalibrationSheet(gray) {
     idsVec       = new cv.Mat();
     rejectedVec  = new cv.MatVector();
 
-    cv.detectMarkers(gray, arucoDictionary, cornersVec, idsVec, arucoParams, rejectedVec);
+    // OpenCV 4.8 instance method (replaces old cv.detectMarkers free function)
+    arucoDetector.detectMarkers(gray, cornersVec, idsVec, rejectedVec);
 
     const count = idsVec.rows;
     if (count < 4) {

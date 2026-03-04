@@ -12,12 +12,12 @@
 <div id="loading-screen" class="screen active">
   <div class="loading-content">
     <div class="logo">🔑 KeyScan</div>
-    <div class="spinner"></div>
+    <div class="spinner"></div
     <p id="loading-message">Loading camera system…</p>
   </div>
 </div>
 
-<!-- ── Step 1: Instructions ────────────────────────────────────────────── -->
+<!--  Step 1: Instructions ────────────────────────────────────────────── -->
 <div id="instructions-screen" class="screen">
   <div class="container">
     <div class="logo">🔑 KeyScan</div>
@@ -159,13 +159,13 @@
 </div>
 
 <!-- ── opencv.js (loaded async, triggers feedback loop when ready) ──────── -->
-<script async src="https://docs.opencv.org/4.8.0/opencv.js" onload="onOpenCvReady()"></script>
-
 <script src="/static/js/feedback.js"></script>
 <script src="/static/js/overlay.js"></script>
 <script src="/static/js/camera.js"></script>
 <script src="/static/js/wizard.js"></script>
 <script src="/static/js/results.js"></script>
+
+<script async src="https://docs.opencv.org/4.8.0/opencv.js" onload="onOpenCvReady()"></script>
 
 </body>
 </html>
