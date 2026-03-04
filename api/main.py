@@ -68,10 +68,10 @@ async def _startup():
 @asynccontextmanager
 async def lifespan(app):
     try:
-        # 20s hard cap so startup never blocks past Railway's 30s healthcheck timeout
-        await asyncio.wait_for(_startup(), timeout=20.0)
+        # 40s hard cap so startup never blocks past Railway's 60s healthcheck timeout
+        await asyncio.wait_for(_startup(), timeout=40.0)
     except asyncio.TimeoutError:
-        print("⚠ Startup initialization timed out after 20s — app starting without full init")
+        print("⚠ Startup initialization timed out after 40s — app starting without full init")
     yield
 
 
