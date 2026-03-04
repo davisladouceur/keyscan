@@ -1,0 +1,46 @@
+{
+  "0": {
+    "corner": "top-left",
+    "top_left_mm": [
+      10.0,
+      10.0
+    ],
+    "center_mm": [
+      20.0,
+      20.0
+    ]
+  },
+  "1": {
+    "corner": "top-right",
+    "top_left_mm": [
+      118.0,
+      10.0
+    ],
+    "center_mm": [
+      128.0,
+      20.0
+    ]
+  },
+  "2": {
+    "corner": "bottom-left",
+    "top_left_mm": [
+      10.0,
+      180.0
+    ],
+    "center_mm": [
+      20.0,
+      190.0
+    ]
+  },
+  "3": {
+    "corner": "bottom-right",
+    "top_left_mm": [
+      118.0,
+      180.0
+    ],
+    "center_mm": [
+      128.0,
+      190.0
+    ]
+  }
+}

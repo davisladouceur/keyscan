@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KeyScan — AI Key Duplication</title>
+  <link rel="stylesheet" href="/static/css/main.css" />
+</head>
+<body>
+
+<!-- ── Loading Screen ──────────────────────────────────────────────────── -->
+<div id="loading-screen" class="screen active">
+  <div class="loading-content">
+    <div class="logo">🔑 KeyScan</div>
+    <div class="spinner"></div>
+    <p id="loading-message">Loading camera system…</p>
+  </div>
+</div>
+
+<!-- ── Step 1: Instructions ────────────────────────────────────────────── -->
+<div id="instructions-screen" class="screen">
+  <div class="container">
+    <div class="logo">🔑 KeyScan</div>
+    <h1>Duplicate Your Key From Home</h1>
+    <p class="subtitle">Print the calibration sheet, place your key on it, and take 3 photos. We'll cut your key and mail it to you.</p>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-text"><strong>Print the calibration sheet</strong><br>At 100% scale — do not "fit to page"</div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-text"><strong>Place your key on the sheet</strong><br>Blade pointing right, inside the dashed rectangle</div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-text"><strong>Take 3 photos</strong><br>The app guides you to the perfect shot</div>
+      </div>
+    </div>
+
+    <a href="/calibration-sheet.pdf" class="btn btn-secondary" target="_blank">
+      📄 Download Calibration Sheet (PDF)
+    </a>
+    <br>
+    <button class="btn btn-primary" id="btn-start-camera">
+      📷 Start Camera
+    </button>
+
+    <p class="hint">Requires camera access. Works on iPhone Safari and Android Chrome.</p>
+  </div>
+</div>
+
+<!-- ── Step 2: Camera Capture ──────────────────────────────────────────── -->
+<div id="camera-screen" class="screen">
+  <div class="camera-container">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="overlay-canvas"></canvas>
+
+    <!-- Real-time feedback checklist -->
+    <div class="checklist-panel">
+      <div class="check-item" id="check-sheet">
+        <span class="check-icon">●</span>
+        <span class="check-label">Calibration sheet</span>
+      </div>
+      <div class="check-item" id="check-angle">
+        <span class="check-icon">●</span>
+        <span class="check-label">Camera angle</span>
+      </div>
+      <div class="check-item" id="check-scale">
+        <span class="check-icon">●</span>
+        <span class="check-label">Distance</span>
+      </div>
+      <div class="check-item" id="check-key">
+        <span class="check-icon">●</span>
+        <span class="check-label">Key detected</span>
+      </div>
+      <div class="check-item" id="check-lighting">
+        <span class="check-icon">●</span>
+        <span class="check-label">Lighting</span>
+      </div>
+      <div class="check-item" id="check-focus">
+        <span class="check-icon">●</span>
+        <span class="check-label">Sharp focus</span>
+      </div>
+    </div>
+
+    <!-- Progress bar -->
+    <div class="progress-bar-container">
+      <div id="progress-bar" class="progress-bar"></div>
+    </div>
+
+    <!-- Photo counter -->
+    <div class="photo-counter">
+      <div id="photo-thumb-0" class="photo-thumb empty">1</div>
+      <div id="photo-thumb-1" class="photo-thumb empty">2</div>
+      <div id="photo-thumb-2" class="photo-thumb empty">3</div>
+    </div>
+
+    <!-- Countdown overlay -->
+    <div id="countdown-overlay" class="countdown-overlay hidden">
+      <div id="countdown-number" class="countdown-number">3</div>
+      <div class="countdown-label">Hold still…</div>
+    </div>
+
+    <!-- Capture button -->
+    <div class="capture-area">
+      <div id="capture-message" class="capture-message">Position the key and sheet in frame</div>
+      <button id="btn-capture" class="btn-capture" disabled>
+        <span class="capture-circle"></span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Step 3: Photo Review ────────────────────────────────────────────── -->
+<div id="review-screen" class="screen">
+  <div class="container">
+    <h2>Review Your Photos</h2>
+    <p>Make sure your key is clearly visible in all 3 photos with good lighting.</p>
+
+    <div class="photo-grid" id="photo-grid"></div>
+
+    <div class="review-actions">
+      <button class="btn btn-secondary" id="btn-retake">Retake Photos</button>
+      <button class="btn btn-primary" id="btn-submit">
+        🔍 Analyse My Key
+      </button>
+    </div>
+
+    <div class="email-field">
+      <label for="email-input">Email (optional — for order updates)</label>
+      <input type="email" id="email-input" placeholder="you@example.com" />
+    </div>
+  </div>
+</div>
+
+<!-- ── Step 4: Analysing ───────────────────────────────────────────────── -->
+<div id="analyzing-screen" class="screen">
+  <div class="container centered">
+    <div class="logo">🔑 KeyScan</div>
+    <div class="spinner large"></div>
+    <h2>Analysing your key…</h2>
+    <p>Our AI is measuring every cut with sub-millimetre precision.</p>
+    <p class="hint">This usually takes 15–30 seconds.</p>
+    <div id="poll-status" class="poll-status"></div>
+  </div>
+</div>
+
+<!-- ── Step 5: Results ────────────────────────────────────────────────── -->
+<div id="results-screen" class="screen">
+  <div class="container">
+    <div id="results-content"></div>
+
+    <div class="results-actions">
+      <button class="btn btn-secondary" id="btn-new-key">Scan Another Key</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── opencv.js (loaded async, triggers feedback loop when ready) ──────── -->
+<script async src="https://docs.opencv.org/4.8.0/opencv.js" onload="onOpenCvReady()"></script>
+
+<script src="/static/js/feedback.js"></script>
+<script src="/static/js/overlay.js"></script>
+<script src="/static/js/camera.js"></script>
+<script src="/static/js/wizard.js"></script>
+<script src="/static/js/results.js"></script>
+
+</body>
+</html>

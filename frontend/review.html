@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KeyScan — Admin Review Queue</title>
+  <style>
+    :root {
+      --green: #1A7A4A; --amber: #E67E22; --red: #C0392B;
+      --blue: #2E86C1; --grey: #6C757D; --light: #F8F9FA;
+      --border: #DEE2E6; --radius: 10px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+           background: var(--light); color: #212529; }
+
+    /* ── Header ─── */
+    header {
+      background: #fff; border-bottom: 1px solid var(--border);
+      padding: 16px 24px; display: flex; align-items: center; gap: 12px;
+    }
+    header h1 { font-size: 20px; }
+    .badge {
+      background: var(--red); color: #fff; border-radius: 20px;
+      padding: 2px 10px; font-size: 13px; font-weight: 700;
+    }
+
+    /* ── Layout ─── */
+    .page { max-width: 1200px; margin: 0 auto; padding: 24px; }
+
+    /* ── Order List ─── */
+    .order-list { display: flex; flex-direction: column; gap: 20px; }
+    .empty { text-align: center; padding: 60px; color: var(--grey); }
+    .empty h2 { font-size: 24px; margin-bottom: 8px; }
+
+    /* ── Order Card ─── */
+    .order-card {
+      background: #fff; border-radius: var(--radius);
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      border-left: 4px solid var(--amber); overflow: hidden;
+    }
+
+    .order-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 18px; background: #FFFDF5;
+      border-bottom: 1px solid var(--border);
+    }
+    .order-id { font-family: monospace; font-size: 13px; color: var(--grey); }
+    .order-meta { font-size: 14px; }
+    .order-meta strong { font-size: 16px; color: var(--green); }
+
+    .order-body { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0; }
+
+    /* ── Photos Panel ─── */
+    .photos-panel {
+      padding: 14px; border-right: 1px solid var(--border);
+    }
+    .photos-panel h3 { font-size: 13px; color: var(--grey); margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .photo-thumbs { display: flex; gap: 8px; flex-wrap: wrap; }
+    .photo-thumbs a img {
+      width: 80px; height: 80px; object-fit: cover;
+      border-radius: 6px; border: 1px solid var(--border);
+    }
+    .no-photos { font-size: 13px; color: var(--grey); font-style: italic; }
+
+    /* ── Measurements Panel ─── */
+    .measurements-panel {
+      padding: 14px; border-right: 1px solid var(--border);
+    }
+    .measurements-panel h3 { font-size: 13px; color: var(--grey); margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+    .bitting-large {
+      font-family: monospace; font-size: 28px; font-weight: 700;
+      color: var(--green); letter-spacing: 4px; margin-bottom: 10px;
+    }
+
+    .detail-row { display: flex; gap: 8px; align-items: center; margin: 5px 0; font-size: 13px; }
+    .detail-label { color: var(--grey); width: 100px; }
+
+    .conf-bar { flex: 1; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+    .conf-fill { height: 100%; border-radius: 3px; }
+    .high { background: var(--green); } .mid { background: var(--amber); } .low { background: var(--red); }
+
+    .flags-list { margin-top: 8px; font-size: 12px; color: var(--amber); }
+    .flags-list li { margin: 3px 0; }
+
+    /* ── Actions Panel ─── */
+    .actions-panel { padding: 14px; }
+    .actions-panel h3 { font-size: 13px; color: var(--grey); margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+    .action-form { display: flex; flex-direction: column; gap: 10px; }
+
+    label { font-size: 13px; font-weight: 600; }
+    input[type=text], textarea {
+      width: 100%; padding: 8px 10px; border: 1px solid var(--border);
+      border-radius: 6px; font-size: 14px; font-family: monospace;
+    }
+    textarea { resize: vertical; min-height: 60px; font-family: -apple-system, sans-serif; }
+
+    .btn-approve {
+      background: var(--green); color: #fff; border: none;
+      padding: 10px; border-radius: 6px; font-size: 14px; font-weight: 600;
+      cursor: pointer; width: 100%;
+    }
+    .btn-correct {
+      background: var(--blue); color: #fff; border: none;
+      padding: 10px; border-radius: 6px; font-size: 14px; font-weight: 600;
+      cursor: pointer; width: 100%;
+    }
+    .btn-approve:hover { opacity: 0.9; }
+    .btn-correct:hover { opacity: 0.9; }
+
+    .phase1-box {
+      background: #F4F6F9; padding: 8px 10px; border-radius: 6px;
+      font-size: 12px; font-family: monospace; max-height: 100px;
+      overflow-y: auto; color: #444; white-space: pre-wrap; word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>🔑 KeyScan</div>
+  <h1>Review Queue</h1>
+  <span class="badge" id="queue-count">…</span>
+</header>
+
+<div class="page">
+  <div id="order-list" class="order-list">
+    <div class="empty"><div class="spinner"></div><p>Loading…</p></div>
+  </div>
+</div>
+
+<style>
+  .spinner { width:32px; height:32px; border:3px solid #ddd; border-top-color: var(--green);
+    border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 12px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+
+<script>
+'use strict';
+
+const API = '';   // Same origin
+
+async function loadQueue() {
+  const res   = await fetch(`${API}/admin/review-queue`, {
+    headers: { Authorization: 'Basic ' + btoa(prompt('Admin username') + ':' + prompt('Admin password')) }
+  });
+  const data  = await res.json();
+  renderQueue(data.orders || []);
+  document.getElementById('queue-count').textContent = data.count || 0;
+}
+
+function renderQueue(orders) {
+  const list = document.getElementById('order-list');
+
+  if (!orders.length) {
+    list.innerHTML = `
+      <div class="empty">
+        <h2>✅ Queue is empty</h2>
+        <p>No orders need human review right now.</p>
+      </div>
+    `;
+    return;
+  }
+
+  list.innerHTML = orders.map(o => orderCardHTML(o)).join('');
+
+  // Wire up form submissions
+  orders.forEach(o => {
+    document.getElementById(`form-approve-${o.id}`)
+      ?.addEventListener('submit', e => handleApprove(e, o.id));
+    document.getElementById(`form-correct-${o.id}`)
+      ?.addEventListener('submit', e => handleCorrect(e, o.id));
+  });
+}
+
+function orderCardHTML(o) {
+  const conf    = o.overall_confidence ?? 0;
+  const confPct = Math.round(conf * 100);
+  const confCls = conf >= 0.8 ? 'high' : conf >= 0.5 ? 'mid' : 'low';
+  const bitting = (o.bitting || []).join(' ');
+  const flags   = o.phase3_result?.flags || [];
+
+  const cutBars = (o.bitting || []).map((code, i) => {
+    const cutConf = o.phase3_result?.cut_validations?.[i]?.confidence ?? 0.7;
+    const c = cutConf >= 0.8 ? 'high' : cutConf >= 0.5 ? 'mid' : 'low';
+    return `
+      <div class="detail-row">
+        <span class="detail-label">Cut ${i+1}: ${code}</span>
+        <div class="conf-bar"><div class="conf-fill ${c}" style="width:${Math.round(cutConf*100)}%"></div></div>
+        <span style="font-size:12px;width:32px">${Math.round(cutConf*100)}%</span>
+      </div>
+    `;
+  }).join('');
+
+  const phase1Raw = o.phase1_result ? JSON.stringify(o.phase1_result, null, 2) : 'N/A';
+
+  return `
+  <div class="order-card" id="card-${o.id}">
+    <div class="order-header">
+      <div>
+        <div class="order-id">${o.id}</div>
+        <div class="order-meta">Created: ${new Date(o.created_at).toLocaleString()}</div>
+      </div>
+      <div class="order-meta">
+        Blank: <strong>${o.blank_code || '?'}</strong> &nbsp;|&nbsp;
+        Confidence: <strong style="color:${conf<0.5?'#C0392B':conf<0.8?'#E67E22':'#1A7A4A'}">${confPct}%</strong>
+      </div>
+    </div>
+
+    <div class="order-body">
+      <!-- Photos -->
+      <div class="photos-panel">
+        <h3>Photos</h3>
+        <div class="no-photos">(Photos stored on server — access via /uploads/)</div>
+      </div>
+
+      <!-- Measurements -->
+      <div class="measurements-panel">
+        <h3>Measurements</h3>
+        <div class="bitting-large">${bitting || '—'}</div>
+        ${cutBars}
+        ${flags.length ? `
+          <ul class="flags-list">
+            ${flags.map(f => `<li>⚠ ${escHtml(f)}</li>`).join('')}
+          </ul>
+        ` : ''}
+        <div style="margin-top:10px; font-size:12px; color:#888;">Phase 1 raw output:</div>
+        <div class="phase1-box">${escHtml(phase1Raw)}</div>
+      </div>
+
+      <!-- Actions -->
+      <div class="actions-panel">
+        <h3>Actions</h3>
+
+        <!-- Approve as-is -->
+        <form id="form-approve-${o.id}" class="action-form">
+          <label for="notes-approve-${o.id}">Reviewer notes (optional)</label>
+          <textarea id="notes-approve-${o.id}" placeholder="e.g. Verified against physical key"></textarea>
+          <button type="submit" class="btn-approve">✓ Approve as-is</button>
+        </form>
+
+        <hr style="margin: 14px 0; border-color: var(--border);">
+
+        <!-- Correct bitting -->
+        <form id="form-correct-${o.id}" class="action-form">
+          <label for="bitting-input-${o.id}">Corrected bitting (comma-separated)</label>
+          <input type="text" id="bitting-input-${o.id}"
+                 placeholder="${(o.bitting||[]).join(',')}"
+                 value="${(o.bitting||[]).join(',')}" />
+          <label for="notes-correct-${o.id}">Notes</label>
+          <textarea id="notes-correct-${o.id}" placeholder="Reason for correction"></textarea>
+          <button type="submit" class="btn-correct">✎ Correct & Approve</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  `;
+}
+
+async function handleApprove(e, orderId) {
+  e.preventDefault();
+  const notes = document.getElementById(`notes-approve-${orderId}`)?.value || '';
+  const form  = new FormData();
+  if (notes) form.append('reviewer_notes', notes);
+
+  const res = await fetch(`/orders/${orderId}/approve`, {
+    method: 'POST', body: form,
+    headers: { Authorization: _authHeader() },
+  });
+
+  if (res.ok) {
+    document.getElementById(`card-${orderId}`)?.remove();
+    const count = parseInt(document.getElementById('queue-count').textContent) - 1;
+    document.getElementById('queue-count').textContent = Math.max(0, count);
+    if (count <= 0) renderQueue([]);
+  } else {
+    alert('Approve failed — ' + res.status);
+  }
+}
+
+async function handleCorrect(e, orderId) {
+  e.preventDefault();
+  const bitting = document.getElementById(`bitting-input-${orderId}`)?.value || '';
+  const notes   = document.getElementById(`notes-correct-${orderId}`)?.value || '';
+  const form    = new FormData();
+  form.append('corrected_bitting', bitting);
+  if (notes) form.append('reviewer_notes', notes);
+
+  const res = await fetch(`/orders/${orderId}/correct`, {
+    method: 'POST', body: form,
+    headers: { Authorization: _authHeader() },
+  });
+
+  if (res.ok) {
+    document.getElementById(`card-${orderId}`)?.remove();
+    const count = parseInt(document.getElementById('queue-count').textContent) - 1;
+    document.getElementById('queue-count').textContent = Math.max(0, count);
+    if (count <= 0) renderQueue([]);
+  } else {
+    alert('Correction failed — ' + res.status);
+  }
+}
+
+let _auth = null;
+function _authHeader() {
+  if (!_auth) _auth = 'Basic ' + btoa(
+    (sessionStorage.getItem('admin_user') || '') + ':' +
+    (sessionStorage.getItem('admin_pass') || '')
+  );
+  return _auth;
+}
+
+function escHtml(str) {
+  return String(str||'')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Bootstrap ─── //
+(async () => {
+  const user = prompt('Admin username:');
+  const pass = prompt('Admin password:');
+  sessionStorage.setItem('admin_user', user);
+  sessionStorage.setItem('admin_pass', pass);
+  _auth = 'Basic ' + btoa(user + ':' + pass);
+  await loadQueue();
+})();
+</script>
+</body>
+</html>
