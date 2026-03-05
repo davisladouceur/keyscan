@@ -179,7 +179,12 @@ def _run_opencv_pipeline_sync(image_path: str, blank_spec: dict) -> dict:
         }
 
     # Step 5: Detect cuts
-    detected_cuts = detect_cuts(blade_result.blade_gray, blank_spec["cut_count"])
+    # Pass blank_spec so the detector can use known cut geometry (preferred)
+    detected_cuts = detect_cuts(
+        blade_result.blade_gray,
+        blank_spec["cut_count"],
+        blank_spec=blank_spec,
+    )
 
     # Step 6: Measure depths
     measured_cuts = measure_cuts(
@@ -188,6 +193,36 @@ def _run_opencv_pipeline_sync(image_path: str, blank_spec: dict) -> dict:
         px_per_mm=scale_info.get("px_per_mm"),
     )
     measured_cuts = pad_to_expected_count(measured_cuts, blank_spec["cut_count"], blank_spec)
+
+    # Step 6b: Physical constraint validation — reject impossible depths.
+    # If any measured depth exceeds the blank's physical maximum (with 30%
+    # tolerance), the blade crop almost certainly still contains the bow or
+    # the perspective correction failed.  Return an error rather than
+    # propagating garbage bitting codes.
+    depth_max_physical = (
+        blank_spec["depth_min"]
+        + (blank_spec["bitting_max"] - blank_spec["bitting_min"])
+        * blank_spec["depth_increment"]
+    )
+    impossible = [
+        mc for mc in measured_cuts
+        if mc.depth_mm > depth_max_physical * 1.30   # 30 % tolerance
+        and mc.position_px > 0                        # skip padded placeholders
+    ]
+    if impossible:
+        bad = impossible[0]
+        return {
+            "bitting": [],
+            "cut_details": [],
+            "overall_confidence": 0.05,
+            "blade_isolation_confidence": blade_result.confidence,
+            "error": (
+                f"Cut {bad.position_number} depth {bad.depth_mm:.2f} mm exceeds "
+                f"physical maximum {depth_max_physical:.2f} mm for "
+                f"{blank_spec['blank_code']}. Key bow may be inside the "
+                f"placement zone — place only the blade in the dashed box."
+            ),
+        }
 
     # Step 7: Score confidence
     cut_scores = score_cuts(measured_cuts, detected_cuts)

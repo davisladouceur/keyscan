@@ -79,6 +79,24 @@ SEED_DATA = [
         "tip_to_first_cut_mm": 6.223,
         "active": True,
     },
+    {
+        # SC4 — Schlage C keyway (classic profile, same cut geometry as SC1).
+        # Differentiated from SC1 by bow shape; cut specs are identical.
+        "blank_code": "SC4",
+        "manufacturer": "Schlage",
+        "cut_count": 6,
+        "depth_min": 0.000,
+        "depth_max": 2.108,
+        "depth_increment": 0.2345,
+        "bitting_min": 0,
+        "bitting_max": 9,
+        "first_cut_from_shoulder_mm": 3.861,
+        "cut_spacing_mm": 3.861,
+        "shoulder_height_mm": 7.772,
+        "tip_to_first_cut_mm": 5.182,
+        "active": True,
+        "notes": "Schlage C keyway (SC4 profile). Same cut geometry as SC1.",
+    },
 ]
 
 
