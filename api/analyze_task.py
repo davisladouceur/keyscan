@@ -10,6 +10,7 @@ Pipeline sequence:
 
 import asyncio
 import os
+import traceback
 from pathlib import Path
 
 import cv2
@@ -28,38 +29,31 @@ from api.claude_phase3 import validate_bitting
 from api.cnc_generator import generate_cnc_instruction
 
 
-def _run_async(coro):
-    """Run an async function from a synchronous Celery task."""
-    loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        loop.close()
-
-
-def run_analysis_pipeline(order_id: str, image_paths: list[str], customer_email: str | None = None):
+async def run_analysis_pipeline(order_id: str, image_paths: list[str], customer_email: str | None = None):
     """
-    Full analysis pipeline — runs synchronously in whatever context calls it.
+    Full analysis pipeline — async, runs in FastAPI's event loop.
 
     Called directly as a FastAPI BackgroundTask on Railway (no Redis/Celery needed),
     or wrapped by the Celery task below for local docker-compose development.
 
-    Args:
-        order_id:      UUID string of the pre-created order.
-        image_paths:   List of absolute paths to the uploaded photos.
-        customer_email: Optional email for customer contact.
+    All async DB calls (update_order_status, save_pipeline_results, get_blank_spec)
+    are awaited directly in this function so they always use the same event loop
+    as the SQLAlchemy engine — avoiding asyncpg "attached to a different loop" errors.
+
+    The sync CPU-heavy work (OpenCV, Claude SDK) runs via asyncio.to_thread() so the
+    event loop remains free to serve other requests during processing.
     """
     from api.order_manager import update_order_status, save_pipeline_results
-    import traceback
+    from api.blank_specs import get_blank_spec
 
     try:
-        _run_async(update_order_status(order_id, "analyzing"))
+        await update_order_status(order_id, "analyzing")
 
-        # ── Phase 1: Claude visual analysis ──────────────────────────────── #
-        phase1 = analyze_photos(image_paths)
+        # ── Phase 1: Claude visual analysis (sync SDK → run in thread) ───── #
+        phase1 = await asyncio.to_thread(analyze_photos, image_paths)
 
         if phase1["photo_quality"] == "reject":
-            _run_async(update_order_status(order_id, "rejected"))
+            await update_order_status(order_id, "rejected")
             return
 
         blank_family = phase1["blank_family"]
@@ -67,29 +61,38 @@ def run_analysis_pipeline(order_id: str, image_paths: list[str], customer_email:
             # Still try OpenCV but flag for review
             phase1["confidence"] = min(phase1["confidence"], 0.5)
 
-        # ── Phase 2: OpenCV measurement pipeline ─────────────────────────── #
+        # Fetch blank spec here (async DB call in the correct event loop)
+        blank_spec = await get_blank_spec(blank_family)
+        if blank_spec is None:
+            blank_spec = await get_blank_spec("KW1")
+
+        # ── Phase 2: OpenCV measurement pipeline (CPU-heavy → run in thread) #
         best_idx = phase1.get("best_photo_index", 0)
         primary_path = image_paths[min(best_idx, len(image_paths) - 1)]
 
-        opencv_result = _run_opencv_pipeline(primary_path, blank_family)
+        # Pass blank_spec directly so no async DB calls are needed inside the thread
+        opencv_result = await asyncio.to_thread(
+            _run_opencv_pipeline_sync, primary_path, blank_spec
+        )
 
-        # ── Phase 3: Claude validation ────────────────────────────────────── #
-        phase3 = validate_bitting(
-            blank_family=blank_family,
-            opencv_bitting=opencv_result["bitting"],
-            phase1_estimate=phase1.get("estimated_bitting", []),
-            opencv_confidence=opencv_result["overall_confidence"],
+        # ── Phase 3: Claude validation (sync SDK → run in thread) ─────────── #
+        phase3 = await asyncio.to_thread(
+            validate_bitting,
+            blank_family,
+            opencv_result["bitting"],
+            phase1.get("estimated_bitting", []),
+            opencv_result["overall_confidence"],
         )
 
         final_bitting = phase3["final_bitting"]
         human_review = phase3["human_review"]
         final_confidence = phase3["overall_confidence"]
 
-        # Generate CNC instructions
+        # Generate CNC instructions (pure CPU, fast)
         cnc = generate_cnc_instruction(blank_family, final_bitting)
 
-        # Persist results
-        _run_async(save_pipeline_results(
+        # Persist results (async DB call in the correct event loop)
+        await save_pipeline_results(
             order_id=order_id,
             blank_code=blank_family,
             bitting=final_bitting,
@@ -99,13 +102,13 @@ def run_analysis_pipeline(order_id: str, image_paths: list[str], customer_email:
             phase3_result=phase3,
             overall_confidence=final_confidence,
             human_review=human_review,
-        ))
+        )
 
     except Exception:
-        # On failure, mark order as errored and log for debugging
+        # Log the full traceback to Railway logs for debugging
         traceback.print_exc()
         try:
-            _run_async(update_order_status(order_id, "error"))
+            await update_order_status(order_id, "error")
         except Exception:
             pass
 
@@ -117,16 +120,17 @@ def run_analysis(self, order_id: str, image_paths: list[str], customer_email: st
     On Railway, run_analysis_pipeline is called directly via FastAPI BackgroundTasks.
     """
     try:
-        run_analysis_pipeline(order_id, image_paths, customer_email)
+        asyncio.run(run_analysis_pipeline(order_id, image_paths, customer_email))
     except Exception as exc:
         raise self.retry(exc=exc, countdown=10)
 
 
-def _run_opencv_pipeline(image_path: str, blank_family: str) -> dict:
+def _run_opencv_pipeline_sync(image_path: str, blank_spec: dict) -> dict:
     """
-    Run the OpenCV measurement pipeline on a single image.
+    Run the full OpenCV measurement pipeline synchronously.
 
-    Returns a dict with bitting array, cut details, and confidence scores.
+    Takes a pre-fetched blank_spec dict so no async DB calls are needed here —
+    safe to run inside asyncio.to_thread().
     """
     image = cv2.imread(image_path)
     if image is None:
@@ -157,14 +161,6 @@ def _run_opencv_pipeline(image_path: str, blank_family: str) -> dict:
             "overall_confidence": 0.15,
             "error": "Key blade not detected in placement zone",
         }
-
-    # Get blank spec for this family (fall back to KW1 defaults if unknown)
-    from api.blank_specs import get_blank_spec
-
-    blank_spec = _run_async(get_blank_spec(blank_family))
-    if blank_spec is None:
-        # Use KW1 as a safe default for unknown blanks
-        blank_spec = _run_async(get_blank_spec("KW1"))
 
     # Step 5: Detect cuts
     detected_cuts = detect_cuts(blade_result.blade_gray, blank_spec["cut_count"])
