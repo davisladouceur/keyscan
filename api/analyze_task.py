@@ -37,10 +37,12 @@ def _run_async(coro):
         loop.close()
 
 
-@celery_app.task(bind=True, max_retries=2)
-def run_analysis(self, order_id: str, image_paths: list[str], customer_email: str | None = None):
+def run_analysis_pipeline(order_id: str, image_paths: list[str], customer_email: str | None = None):
     """
-    Full pipeline task. Called by the FastAPI /analyze endpoint.
+    Full analysis pipeline — runs synchronously in whatever context calls it.
+
+    Called directly as a FastAPI BackgroundTask on Railway (no Redis/Celery needed),
+    or wrapped by the Celery task below for local docker-compose development.
 
     Args:
         order_id:      UUID string of the pre-created order.
@@ -48,6 +50,7 @@ def run_analysis(self, order_id: str, image_paths: list[str], customer_email: st
         customer_email: Optional email for customer contact.
     """
     from api.order_manager import update_order_status, save_pipeline_results
+    import traceback
 
     try:
         _run_async(update_order_status(order_id, "analyzing"))
@@ -57,12 +60,7 @@ def run_analysis(self, order_id: str, image_paths: list[str], customer_email: st
 
         if phase1["photo_quality"] == "reject":
             _run_async(update_order_status(order_id, "rejected"))
-            return {
-                "order_id": order_id,
-                "status": "rejected",
-                "reason": "Photo quality too poor for analysis",
-                "issues": phase1.get("issues", []),
-            }
+            return
 
         blank_family = phase1["blank_family"]
         if blank_family == "unknown":
@@ -70,7 +68,6 @@ def run_analysis(self, order_id: str, image_paths: list[str], customer_email: st
             phase1["confidence"] = min(phase1["confidence"], 0.5)
 
         # ── Phase 2: OpenCV measurement pipeline ─────────────────────────── #
-        # Use the best photo identified by Phase 1
         best_idx = phase1.get("best_photo_index", 0)
         primary_path = image_paths[min(best_idx, len(image_paths) - 1)]
 
@@ -104,27 +101,24 @@ def run_analysis(self, order_id: str, image_paths: list[str], customer_email: st
             human_review=human_review,
         ))
 
-        status = "review_required" if human_review else "approved"
-
-        return {
-            "order_id": order_id,
-            "status": status,
-            "blank_family": blank_family,
-            "manufacturer": phase1.get("manufacturer", ""),
-            "bitting": final_bitting,
-            "confidence": final_confidence,
-            "cnc_instruction": cnc["standard"],
-            "human_review": human_review,
-            "flags": phase3.get("flags", []),
-            "cut_details": _format_cut_details(opencv_result),
-        }
-
-    except Exception as exc:
-        # On failure, mark order as errored and re-raise for Celery retry
+    except Exception:
+        # On failure, mark order as errored and log for debugging
+        traceback.print_exc()
         try:
             _run_async(update_order_status(order_id, "error"))
         except Exception:
             pass
+
+
+@celery_app.task(bind=True, max_retries=2)
+def run_analysis(self, order_id: str, image_paths: list[str], customer_email: str | None = None):
+    """
+    Celery task wrapper — used only in local docker-compose development.
+    On Railway, run_analysis_pipeline is called directly via FastAPI BackgroundTasks.
+    """
+    try:
+        run_analysis_pipeline(order_id, image_paths, customer_email)
+    except Exception as exc:
         raise self.retry(exc=exc, countdown=10)
 
 
