@@ -36,8 +36,8 @@ def detect_cuts(blade_gray: np.ndarray, expected_cut_count: int) -> list[Detecte
     profile = _extract_edge_profile(blade_gray)
     smoothed = _smooth_profile(profile)
 
-    # Convert to depth-from-top: invert so cuts appear as peaks
-    inverted = -smoothed
+    # Cuts are LOCAL MAXIMA in the edge profile: the blade edge dips DOWN at a cut
+    # (higher y = further from image top = deeper cut).  Do NOT invert.
 
     # Dynamic minimum prominence: 10% of the profile range, at least 3 px
     profile_range = smoothed.max() - smoothed.min()
@@ -48,7 +48,7 @@ def detect_cuts(blade_gray: np.ndarray, expected_cut_count: int) -> list[Detecte
     min_distance = max(20, len(profile) // (expected_cut_count * 2 + 2))
 
     peaks, properties = signal.find_peaks(
-        inverted,
+        smoothed,           # find maxima — cuts are the high points of the profile
         prominence=min_prominence,
         width=4,
         distance=min_distance,
@@ -67,13 +67,15 @@ def detect_cuts(blade_gray: np.ndarray, expected_cut_count: int) -> list[Detecte
     for k in properties:
         properties[k] = properties[k][sort_order]
 
-    # Compute baseline (uncut metal height) as the median of the full profile
-    baseline_y = float(np.median(smoothed))
+    # Baseline = uncut shoulder height = 5th percentile of the profile.
+    # The shoulder (uncut ridges) sits at the TOP of the blade (small y values).
+    # Using the 5th percentile is robust even when most columns are at cut depth.
+    baseline_y = float(np.percentile(smoothed, 5))
 
     cuts = []
     for i, peak_pos in enumerate(peaks):
         valley_y = float(smoothed[peak_pos])
-        depth_px = baseline_y - valley_y  # positive = deeper cut
+        depth_px = valley_y - baseline_y  # positive: cut dips below shoulder baseline
         cuts.append(DetectedCut(
             position_px=int(peak_pos),
             valley_depth_px=max(0.0, depth_px),
@@ -97,8 +99,9 @@ def _extract_edge_profile(blade_gray: np.ndarray) -> np.ndarray:
     # Threshold to separate blade (dark) from background (white)
     _, binary = cv2.threshold(blade_gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
-    # Scan top 60% of the crop for the blade edge
-    scan_height = int(height * 0.6)
+    # Scan top 85% of the crop for the blade edge.
+    # Deep cuts (KW1 bitting 7 ≈ 3.4 mm = 68 px below shoulder) need headroom.
+    scan_height = int(height * 0.85)
 
     for x in range(width):
         col = binary[:scan_height, x]

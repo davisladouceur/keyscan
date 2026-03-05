@@ -128,6 +128,11 @@ def isolate_blade(corrected_image: np.ndarray) -> Optional[BladeResult]:
     # Heuristic: the shoulder end has more metal area in the left third vs right third
     blade_crop, blade_gray = _orient_shoulder_left(blade_crop, blade_gray)
 
+    # Remove the bow (if it fell inside the placement zone) so the cut detector
+    # sees only the narrow blade strip.  The bow is ~15–20 mm tall vs ~6–7 mm
+    # for the blade; scanning the bow's top edge produces garbage cut depths.
+    blade_crop, blade_gray = _trim_bow_region(blade_crop, blade_gray)
+
     # Convert pixel positions back to mm on the full sheet
     abs_x_px = ZONE_X_PX + x1
     abs_y_px = ZONE_Y_PX + y1
@@ -172,3 +177,56 @@ def _orient_shoulder_left(
         blade_gray = cv2.flip(blade_gray, 1)
 
     return blade_crop, blade_gray
+
+
+def _trim_bow_region(
+    blade_crop: np.ndarray,
+    blade_gray: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Remove the key bow from the left side of the blade crop.
+
+    After _orient_shoulder_left the bow (if present) is on the left.
+    The bow is ~15–20 mm tall; the blade strip is only ~6–7 mm.
+    We scan column heights left-to-right and find the first x where the
+    key cross-section narrows to ≤ 9 mm — that is the bow-to-blade
+    shoulder transition.  The crop is then trimmed to start there.
+
+    If the crop is already ≤ 9 mm tall (bow-free), it is returned unchanged.
+    """
+    max_blade_h_px = int(9 * PX_PER_MM)   # 9 mm × 20 px/mm = 180 px
+
+    _, binary = cv2.threshold(
+        blade_gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+    )
+
+    # Compute dark-pixel extent (first–last dark row) for every column
+    heights = np.zeros(binary.shape[1], dtype=np.int32)
+    for x in range(binary.shape[1]):
+        col = binary[:, x]
+        dark = np.where(col > 0)[0]
+        if len(dark) >= 5:
+            heights[x] = int(dark[-1] - dark[0])
+
+    # Short-circuit: if no column exceeds the blade height limit,
+    # the bow is not in the crop.
+    if int(heights.max()) <= max_blade_h_px:
+        return blade_crop, blade_gray
+
+    # Find first x where 5 consecutive columns all measure ≤ max_blade_h_px
+    # (robustness: one noisy column won't trigger a premature trim)
+    consecutive = 0
+    blade_start = 0
+    for x in range(len(heights)):
+        if 0 < heights[x] <= max_blade_h_px:
+            consecutive += 1
+            if consecutive >= 5:
+                blade_start = x - 4   # back up to the start of the run
+                break
+        else:
+            consecutive = 0
+
+    if blade_start <= 0:
+        return blade_crop, blade_gray  # couldn't find the transition
+
+    return blade_crop[:, blade_start:], blade_gray[:, blade_start:]
