@@ -125,6 +125,22 @@ def run_analysis(self, order_id: str, image_paths: list[str], customer_email: st
         raise self.retry(exc=exc, countdown=10)
 
 
+def _load_image_exif_aware(image_path: str) -> np.ndarray:
+    """
+    Load a JPEG respecting its EXIF orientation tag.
+
+    cv2.imread ignores EXIF rotation, so phone photos taken in portrait
+    mode arrive sideways and completely break the homography / zone crop.
+    PIL's exif_transpose fixes this before we hand off to OpenCV.
+    """
+    from PIL import Image, ImageOps
+    pil_img = Image.open(image_path)
+    pil_img = ImageOps.exif_transpose(pil_img)   # apply EXIF rotation
+    if pil_img.mode != "RGB":
+        pil_img = pil_img.convert("RGB")
+    return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+
+
 def _run_opencv_pipeline_sync(image_path: str, blank_spec: dict) -> dict:
     """
     Run the full OpenCV measurement pipeline synchronously.
@@ -132,8 +148,8 @@ def _run_opencv_pipeline_sync(image_path: str, blank_spec: dict) -> dict:
     Takes a pre-fetched blank_spec dict so no async DB calls are needed here —
     safe to run inside asyncio.to_thread().
     """
-    image = cv2.imread(image_path)
-    if image is None:
+    image = _load_image_exif_aware(image_path)
+    if image is None or image.size == 0:
         raise ValueError(f"Could not read image: {image_path}")
 
     # Step 1: Detect ArUco markers

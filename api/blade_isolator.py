@@ -59,48 +59,55 @@ def isolate_blade(corrected_image: np.ndarray) -> Optional[BladeResult]:
 
     gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
 
-    # Adaptive threshold to handle varied lighting conditions
-    thresh = cv2.adaptiveThreshold(
+    # --- Thresholding: try adaptive first, fall back to Otsu if it finds
+    # no valid blade (metallic keys can fool adaptive threshold) ----------
+    def _find_blade_contour(binary: np.ndarray):
+        """Return the best blade contour from a binary image, or None."""
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        cleaned = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=3)
+        cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_OPEN,  kernel, iterations=1)
+
+        cnts, _ = cv2.findContours(cleaned, cv2.RETR_EXTERNAL,
+                                   cv2.CHAIN_APPROX_SIMPLE)
+        if not cnts:
+            return None
+
+        # Keys: area ≥ 2 % of zone, aspect ratio ≥ 2:1
+        # (was 5 % and 3:1 — too strict for keys with large bows)
+        min_area = ZONE_W_PX * ZONE_H_PX * 0.02
+        best, best_score = None, 0.0
+        for cnt in cnts:
+            area = cv2.contourArea(cnt)
+            if area < min_area:
+                continue
+            x, y, w, h = cv2.boundingRect(cnt)
+            aspect = max(w, h) / max(min(w, h), 1)
+            if aspect < 2.0:          # was 3.0
+                continue
+            score = area * aspect
+            if score > best_score:
+                best_score = score
+                best = cnt
+        return best
+
+    # Attempt 1: adaptive threshold (good for uneven lighting)
+    thresh_adaptive = cv2.adaptiveThreshold(
         gray, 255,
         cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
         cv2.THRESH_BINARY_INV,
-        blockSize=21,
-        C=10,
+        blockSize=31,
+        C=8,
     )
+    blade_contour = _find_blade_contour(thresh_adaptive)
 
-    # Remove small noise blobs
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-    thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
-    thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
-
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    if not contours:
-        return None
-
-    # Find the contour that best matches a key blade:
-    # - Large enough area (at least 10% of the zone)
-    # - High aspect ratio (width > 3x height)
-    min_area = ZONE_W_PX * ZONE_H_PX * 0.05
-    blade_contour = None
-    best_score = 0.0
-
-    for cnt in contours:
-        area = cv2.contourArea(cnt)
-        if area < min_area:
-            continue
-
-        x, y, w, h = cv2.boundingRect(cnt)
-        aspect = max(w, h) / max(min(w, h), 1)
-
-        # Keys have aspect ratio ~4:1 to 10:1
-        if aspect < 3.0:
-            continue
-
-        score = area * aspect
-        if score > best_score:
-            best_score = score
-            blade_contour = cnt
+    # Attempt 2: Otsu's global threshold (better for uniform metallic keys)
+    if blade_contour is None:
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        _, thresh_otsu = cv2.threshold(
+            blurred, 0, 255,
+            cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU,
+        )
+        blade_contour = _find_blade_contour(thresh_otsu)
 
     if blade_contour is None:
         return None
