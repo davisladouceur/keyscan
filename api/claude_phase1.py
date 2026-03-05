@@ -22,6 +22,9 @@ from api.prompt_config import (
     PHASE1_USER_MESSAGE,
 )
 
+# Supported blank families — must stay in sync with db/seed.py
+SUPPORTED_BLANKS = ["KW1", "SC1", "SC4", "M1", "WR5", "unknown"]
+
 # Tool schema — enforces structured JSON output from Claude
 KEY_ANALYSIS_TOOL = {
     "name": "key_analysis",
@@ -31,8 +34,20 @@ KEY_ANALYSIS_TOOL = {
         "properties": {
             "blank_family": {
                 "type": "string",
-                "enum": ["KW1", "SC1", "M1", "WR5", "unknown"],
-                "description": "Identified key blank family.",
+                "enum": SUPPORTED_BLANKS,
+                "description": (
+                    "Identified key blank family. "
+                    "If a blank code is stamped on the bow (e.g. 'SC4', 'KW1'), "
+                    "use that value directly with confidence=1.0."
+                ),
+            },
+            "blank_stamp": {
+                "type": "string",
+                "description": (
+                    "The exact blank-family text stamped or engraved on the key bow or "
+                    "shoulder (e.g. 'SC4', 'KW1', 'Kwikset'). "
+                    "Empty string if no blank-family marking is found."
+                ),
             },
             "manufacturer": {
                 "type": "string",
@@ -42,17 +57,27 @@ KEY_ANALYSIS_TOOL = {
                 "type": "number",
                 "minimum": 0,
                 "maximum": 1,
-                "description": "Confidence in blank family identification (0-1).",
+                "description": (
+                    "Confidence in blank family identification (0-1). "
+                    "Set to 1.0 when blank_stamp provides a definitive match."
+                ),
             },
-            "stamps_detected": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Any text or brand stamps visible on the key.",
+            "bitting_stamp": {
+                "type": "string",
+                "description": (
+                    "The exact numeric bitting code stamped on the key, if visible "
+                    "(e.g. '35463', '214352'). Empty string if not found. "
+                    "This is different from the blank family stamp."
+                ),
             },
             "estimated_bitting": {
                 "type": "array",
                 "items": {"type": "integer"},
-                "description": "Rough bitting code estimate — empty array if not visible.",
+                "description": (
+                    "Per-cut bitting code estimate as an integer array. "
+                    "If bitting_stamp is present, convert it to integers here. "
+                    "Empty array [] only if cuts are completely invisible."
+                ),
             },
             "photo_quality": {
                 "type": "string",
@@ -125,12 +150,33 @@ def analyze_photos(image_paths: list[Union[str, Path]]) -> dict:
     for block in response.content:
         if block.type == "tool_use" and block.name == "key_analysis":
             result = dict(block.input)
-            # Normalise optional fields to defaults if absent
+
+            # ── Normalise optional fields ────────────────────────────── #
             result.setdefault("manufacturer", "")
+            result.setdefault("blank_stamp", "")
+            result.setdefault("bitting_stamp", "")
             result.setdefault("stamps_detected", [])
             result.setdefault("estimated_bitting", [])
             result.setdefault("best_photo_index", 0)
             result.setdefault("issues", [])
+
+            # ── Blank-family stamp override ──────────────────────────── #
+            # If Claude read a blank code directly from the key (e.g. "SC4"),
+            # treat it as ground truth and force blank_family + confidence.
+            blank_stamp = result["blank_stamp"].strip().upper()
+            if blank_stamp in SUPPORTED_BLANKS and blank_stamp != "unknown":
+                result["blank_family"] = blank_stamp
+                result["confidence"] = 1.0   # stamp is definitive
+
+            # ── Bitting stamp → estimated_bitting ───────────────────── #
+            # If a numeric bitting code was stamped on the key, parse it
+            # into the estimated_bitting array (overrides visual estimate).
+            bitting_stamp = result["bitting_stamp"].strip()
+            if bitting_stamp and not result["estimated_bitting"]:
+                digits = [int(c) for c in bitting_stamp if c.isdigit()]
+                if digits:
+                    result["estimated_bitting"] = digits
+
             return result
 
     raise ValueError("Claude did not return a key_analysis tool call")
