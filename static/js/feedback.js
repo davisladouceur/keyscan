@@ -37,19 +37,23 @@ window.detectedCorners = null;
 /** Called by opencv.js onload. */
 function onOpenCvReady() {
   cv = window.cv;
-  try {
-    // OpenCV 4.8 new API — all three args are required by this JS build
-    const dict         = cv.getPredefinedDictionary(cv.DICT_4X4_50);
-    const params       = new cv.aruco_DetectorParameters();
-    const refineParams = new cv.aruco_RefineParameters(10, 3.0, true);
-    arucoDetector = new cv.aruco_ArucoDetector(dict, params, refineParams);
-    console.log('ArUco detector initialised');
-  } catch (e) {
-    console.warn('ArUco init error:', e);
-    arucoDetector = null;
-  }
-  // Notify wizard.js that OpenCV is ready
-  document.dispatchEvent(new Event('opencv-ready'));
+  // The onload fires when the JS is parsed, but the WASM binary may still be
+  // compiling. cv['onRuntimeInitialized'] fires once all C++ bindings are ready.
+  cv['onRuntimeInitialized'] = function () {
+    try {
+      // OpenCV 4.8 new API — all three args are required by this JS build
+      const dict         = cv.getPredefinedDictionary(cv.DICT_4X4_50);
+      const params       = new cv.aruco_DetectorParameters();
+      const refineParams = new cv.aruco_RefineParameters(10, 3.0, true);
+      arucoDetector = new cv.aruco_ArucoDetector(dict, params, refineParams);
+      console.log('ArUco detector initialised');
+    } catch (e) {
+      console.warn('ArUco init error:', e);
+      arucoDetector = null;
+    }
+    // Notify wizard.js that OpenCV is ready
+    document.dispatchEvent(new Event('opencv-ready'));
+  };
 }
 
 /** Start the 400ms feedback loop. */
