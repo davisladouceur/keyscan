@@ -8,6 +8,7 @@
 'use strict';
 
 let mediaStream = null;
+let _torchOn     = false;   // current torch state
 
 /**
  * Start the camera and attach it to the video element.
@@ -43,14 +44,70 @@ async function startCamera() {
     video.onloadedmetadata = resolve;
   });
   await video.play();
+
+  // Show the torch button only if this device supports it
+  _torchOn = false;
+  const torchBtn = document.getElementById('btn-torch');
+  if (torchBtn) {
+    torchBtn.style.display = _isTorchSupported() ? 'flex' : 'none';
+    torchBtn.classList.remove('torch-on');
+    torchBtn.title = 'Turn on flashlight';
+  }
 }
 
-/** Stop all camera tracks. */
+/** Stop all camera tracks (torch turns off automatically with the track). */
 function stopCamera() {
+  _torchOn = false;
+  const torchBtn = document.getElementById('btn-torch');
+  if (torchBtn) {
+    torchBtn.classList.remove('torch-on');
+    torchBtn.style.display = 'none';
+  }
   if (mediaStream) {
     mediaStream.getTracks().forEach(t => t.stop());
     mediaStream = null;
   }
+}
+
+/**
+ * Toggle the device flashlight / torch on or off.
+ * No-op if the device does not support torch or no stream is active.
+ *
+ * @returns {Promise<boolean>} Resolves to the new torch state (true = on).
+ */
+async function toggleTorch() {
+  const track = mediaStream?.getVideoTracks()[0];
+  if (!track || !_isTorchSupported()) return _torchOn;
+
+  _torchOn = !_torchOn;
+  try {
+    await track.applyConstraints({ advanced: [{ torch: _torchOn }] });
+  } catch (err) {
+    // Some browsers accept the constraint but still fail at runtime
+    console.warn('Torch constraint failed:', err);
+    _torchOn = false;
+  }
+
+  // Update button appearance
+  const torchBtn = document.getElementById('btn-torch');
+  if (torchBtn) {
+    torchBtn.classList.toggle('torch-on', _torchOn);
+    torchBtn.title = _torchOn ? 'Turn off flashlight' : 'Turn on flashlight';
+  }
+
+  return _torchOn;
+}
+
+/**
+ * Check whether the active camera track supports the torch constraint.
+ * @returns {boolean}
+ */
+function _isTorchSupported() {
+  const track = mediaStream?.getVideoTracks()[0];
+  if (!track) return false;
+  // getCapabilities() may be undefined on some browsers
+  const caps = track.getCapabilities?.() || {};
+  return !!caps.torch;
 }
 
 /**

@@ -142,6 +142,48 @@ p  { line-height: 1.6; color: #555; margin-bottom: 12px; }
   pointer-events: none;
 }
 
+/* ── Torch Button ────────────────────────────────────────────────────────── */
+
+.btn-torch {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.65);
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 20;
+  transition: background 0.2s, border-color 0.2s, transform 0.1s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.btn-torch:active {
+  transform: scale(0.92);
+}
+
+/* ON state — amber glow */
+.btn-torch.torch-on {
+  background: rgba(230, 126, 34, 0.85);
+  border-color: #f39c12;
+  box-shadow: 0 0 14px rgba(230, 126, 34, 0.7);
+}
+
+.torch-icon {
+  font-size: 22px;
+  line-height: 1;
+  filter: grayscale(0.4);   /* subtle desaturation when off */
+  transition: filter 0.2s;
+}
+
+.btn-torch.torch-on .torch-icon {
+  filter: none;
+}
+
 /* ── Checklist Panel ─────────────────────────────────────────────────────── */
 
 .checklist-panel {

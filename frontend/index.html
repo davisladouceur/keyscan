@@ -57,6 +57,12 @@
     <video id="video" autoplay playsinline muted></video>
     <canvas id="overlay-canvas"></canvas>
 
+    <!-- Torch / flashlight toggle (hidden until camera confirms torch support) -->
+    <button id="btn-torch" class="btn-torch" style="display:none"
+            title="Turn on flashlight" onclick="toggleTorch()">
+      <span class="torch-icon">🔦</span>
+    </button>
+
     <!-- Real-time feedback checklist -->
     <div class="checklist-panel">
       <div class="check-item" id="check-sheet">
