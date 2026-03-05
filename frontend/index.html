@@ -51,6 +51,53 @@
   </div>
 </div>
 
+<!-- ── Step 1b: Key Blank Selection ────────────────────────────────────── -->
+<div id="blank-screen" class="screen">
+  <div class="container">
+    <div class="logo">🔑 KeyScan</div>
+    <h1>What Type of Key?</h1>
+    <p class="subtitle">Select your key blank for accurate results. Check the thick end of your key for a stamped code.</p>
+
+    <div class="blank-grid" id="blank-grid">
+      <button class="blank-card" data-blank="KW1">
+        <div class="blank-code">KW1</div>
+        <div class="blank-mfr">Kwikset</div>
+        <div class="blank-cuts">5 cuts</div>
+      </button>
+      <button class="blank-card" data-blank="SC1">
+        <div class="blank-code">SC1</div>
+        <div class="blank-mfr">Schlage B</div>
+        <div class="blank-cuts">6 cuts</div>
+      </button>
+      <button class="blank-card" data-blank="SC4">
+        <div class="blank-code">SC4</div>
+        <div class="blank-mfr">Schlage C</div>
+        <div class="blank-cuts">6 cuts</div>
+      </button>
+      <button class="blank-card" data-blank="M1">
+        <div class="blank-code">M1</div>
+        <div class="blank-mfr">Master</div>
+        <div class="blank-cuts">4 cuts</div>
+      </button>
+      <button class="blank-card" data-blank="WR5">
+        <div class="blank-code">WR5</div>
+        <div class="blank-mfr">Weiser</div>
+        <div class="blank-cuts">5 cuts</div>
+      </button>
+      <button class="blank-card blank-card-auto" data-blank="">
+        <div class="blank-code">?</div>
+        <div class="blank-mfr">Not sure</div>
+        <div class="blank-cuts">Auto-detect</div>
+      </button>
+    </div>
+
+    <button class="btn btn-primary" id="btn-blank-continue" disabled>
+      📷 Start Camera
+    </button>
+    <p class="hint">Tip: look for a code stamped on the thick rounded end of your key.</p>
+  </div>
+</div>
+
 <!-- ── Step 2: Camera Capture ──────────────────────────────────────────── -->
 <div id="camera-screen" class="screen">
   <div class="camera-container">

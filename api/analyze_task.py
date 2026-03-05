@@ -29,7 +29,7 @@ from api.claude_phase3 import validate_bitting
 from api.cnc_generator import generate_cnc_instruction
 
 
-async def run_analysis_pipeline(order_id: str, image_paths: list[str], customer_email: str | None = None):
+async def run_analysis_pipeline(order_id: str, image_paths: list[str], customer_email: str | None = None, blank_family_override: str | None = None):
     """
     Full analysis pipeline — async, runs in FastAPI's event loop.
 
@@ -57,6 +57,14 @@ async def run_analysis_pipeline(order_id: str, image_paths: list[str], customer_
             return
 
         blank_family = phase1["blank_family"]
+
+        # User-selected blank overrides Phase 1 auto-detection
+        if blank_family_override and blank_family_override.upper() in ["KW1", "SC1", "SC4", "M1", "WR5"]:
+            blank_family = blank_family_override.upper()
+            phase1["blank_family"] = blank_family
+            phase1["confidence"] = 1.0   # User told us — treat as ground truth
+            print(f"[pipeline] blank_family overridden by user selection: {blank_family}")
+
         if blank_family == "unknown":
             # Still try OpenCV but flag for review
             phase1["confidence"] = min(phase1["confidence"], 0.5)
@@ -114,13 +122,13 @@ async def run_analysis_pipeline(order_id: str, image_paths: list[str], customer_
 
 
 @celery_app.task(bind=True, max_retries=2)
-def run_analysis(self, order_id: str, image_paths: list[str], customer_email: str | None = None):
+def run_analysis(self, order_id: str, image_paths: list[str], customer_email: str | None = None, blank_family_override: str | None = None):
     """
     Celery task wrapper — used only in local docker-compose development.
     On Railway, run_analysis_pipeline is called directly via FastAPI BackgroundTasks.
     """
     try:
-        asyncio.run(run_analysis_pipeline(order_id, image_paths, customer_email))
+        asyncio.run(run_analysis_pipeline(order_id, image_paths, customer_email, blank_family_override))
     except Exception as exc:
         raise self.retry(exc=exc, countdown=10)
 

@@ -4,10 +4,11 @@
  * Screens (in order):
  *   1. loading        — Wait for opencv.js
  *   2. instructions   — How it works + calibration sheet download
- *   3. camera         — Live capture with real-time feedback (3 photos)
- *   4. review         — Preview all 3 photos before submitting
- *   5. analyzing      — Show spinner while backend processes
- *   6. results        — Display bitting result
+ *   3. blank          — User selects key blank type (KW1/SC1/SC4/M1/WR5 or auto)
+ *   4. camera         — Live capture with real-time feedback (3 photos)
+ *   5. review         — Preview all 3 photos before submitting
+ *   6. analyzing      — Show spinner while backend processes
+ *   7. results        — Display bitting result
  */
 
 'use strict';
@@ -16,8 +17,9 @@
 
 const capturedPhotos = [];   // [{blob, url}, ...]
 const MAX_PHOTOS = 3;
-let opencvReady = false;
-let pollTimer   = null;
+let opencvReady  = false;
+let pollTimer    = null;
+let selectedBlank = null;    // blank code string (e.g. 'SC4'), '' = auto-detect, null = nothing chosen yet
 
 // ── Initialise ────────────────────────────────────────────────────────────── //
 
@@ -27,11 +29,22 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('loading-message').textContent = 'Loading camera system…';
 
   // Wire up buttons
-  document.getElementById('btn-start-camera').addEventListener('click', enterCameraScreen);
+  document.getElementById('btn-start-camera').addEventListener('click', enterBlankScreen);
+  document.getElementById('btn-blank-continue').addEventListener('click', enterCameraScreen);
   document.getElementById('btn-capture').addEventListener('click', () => triggerCapture());
   document.getElementById('btn-retake').addEventListener('click', enterCameraScreen);
   document.getElementById('btn-submit').addEventListener('click', submitPhotos);
   document.getElementById('btn-new-key').addEventListener('click', resetWizard);
+
+  // Wire up blank selection cards
+  document.querySelectorAll('.blank-card').forEach(card => {
+    card.addEventListener('click', () => {
+      document.querySelectorAll('.blank-card').forEach(c => c.classList.remove('selected'));
+      card.classList.add('selected');
+      selectedBlank = card.dataset.blank;  // '' for auto-detect, 'SC4' etc. for explicit
+      document.getElementById('btn-blank-continue').disabled = false;
+    });
+  });
 });
 
 document.addEventListener('opencv-ready', () => {
@@ -54,6 +67,13 @@ function showScreen(name) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   const target = document.getElementById(`${name}-screen`);
   if (target) target.classList.add('active');
+}
+
+function enterBlankScreen() {
+  selectedBlank = null;
+  document.querySelectorAll('.blank-card').forEach(c => c.classList.remove('selected'));
+  document.getElementById('btn-blank-continue').disabled = true;
+  showScreen('blank');
 }
 
 async function enterCameraScreen() {
@@ -116,6 +136,8 @@ async function submitPhotos() {
     form.append('photos', p.blob, `photo_${i}.jpg`);
   });
   if (email) form.append('email', email);
+  // Pass the explicitly selected blank (non-empty string means user chose it)
+  if (selectedBlank) form.append('blank_family', selectedBlank);
 
   let orderId;
   try {

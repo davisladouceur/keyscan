@@ -157,6 +157,7 @@ async def calibration_sheet():
 async def analyze(
     photos: list[UploadFile] = File(..., description="2-3 JPEG photos of the key"),
     email: Optional[str] = Form(None, description="Customer email (optional)"),
+    blank_family: Optional[str] = Form(None, description="Key blank code selected by user (e.g. SC4, KW1). Overrides Phase 1 auto-detection."),
 ):
     """
     Accept key photos, create an order, and dispatch the analysis pipeline.
@@ -201,7 +202,7 @@ async def analyze(
     order_id = await create_order(customer_email=email)
 
     # Schedule directly on the running event loop — fire and forget
-    asyncio.create_task(run_analysis_pipeline(order_id, saved_paths, email))
+    asyncio.create_task(run_analysis_pipeline(order_id, saved_paths, email, blank_family))
 
     return {
         "order_id": order_id,
