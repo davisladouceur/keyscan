@@ -132,9 +132,12 @@ def build_sheet_image() -> np.ndarray:
     zone_x2 = zone_x1 + mm_to_px(ZONE_W_MM)
     zone_y2 = zone_y1 + mm_to_px(ZONE_H_MM)
 
-    # Draw dashed border manually (every 15px on, 10px off)
-    grey = 180
-    dash_on, dash_off = 15, 10
+    # Draw dashed border — dark colour, thick, long dashes so it's clearly
+    # visible when printed on a home printer
+    dark = 30          # near-black (was 180 = light grey)
+    dash_on = 25       # px "on"  (was 15)
+    dash_off = 10      # px "off" (was 10)
+    border_px = 5      # line thickness in pixels (was 2)
 
     def draw_dashed_hline(img, y, x1, x2, color, on, off):
         x = x1
@@ -156,15 +159,47 @@ def build_sheet_image() -> np.ndarray:
             y = end
             draw = not draw
 
-    for thickness in range(2):
+    for thickness in range(border_px):
         draw_dashed_hline(sheet, zone_y1 + thickness, zone_x1, zone_x2,
-                          grey, dash_on, dash_off)
+                          dark, dash_on, dash_off)
         draw_dashed_hline(sheet, zone_y2 - thickness, zone_x1, zone_x2,
-                          grey, dash_on, dash_off)
+                          dark, dash_on, dash_off)
         draw_dashed_vline(sheet, zone_x1 + thickness, zone_y1, zone_y2,
-                          grey, dash_on, dash_off)
+                          dark, dash_on, dash_off)
         draw_dashed_vline(sheet, zone_x2 - thickness, zone_y1, zone_y2,
-                          grey, dash_on, dash_off)
+                          dark, dash_on, dash_off)
+
+    # Solid corner brackets — extra visual anchor for placement
+    bracket_len = mm_to_px(8)   # 8mm long solid lines at each corner
+    bracket_t   = border_px + 2
+    corners = [
+        (zone_x1, zone_y1, +1, +1),   # top-left
+        (zone_x2, zone_y1, -1, +1),   # top-right
+        (zone_x1, zone_y2, +1, -1),   # bottom-left
+        (zone_x2, zone_y2, -1, -1),   # bottom-right
+    ]
+    for cx, cy, dx, dy in corners:
+        # horizontal arm
+        x0 = min(cx, cx + dx * bracket_len)
+        x1b = max(cx, cx + dx * bracket_len)
+        for t in range(bracket_t):
+            sheet[cy + dy * t, x0:x1b] = dark
+        # vertical arm
+        y0 = min(cy, cy + dy * bracket_len)
+        y1b = max(cy, cy + dy * bracket_len)
+        for t in range(bracket_t):
+            sheet[y0:y1b, cx + dx * t] = dark
+
+    # "PLACE KEY HERE" label centred just above the placement zone
+    label = "PLACE KEY HERE"
+    font       = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 1.0
+    thickness_text = 2
+    (tw, th), _ = cv2.getTextSize(label, font, font_scale, thickness_text)
+    label_x = (zone_x1 + zone_x2 - tw) // 2
+    label_y = zone_y1 - mm_to_px(4)   # 4mm above the box
+    cv2.putText(sheet, label, (label_x, label_y),
+                font, font_scale, dark, thickness_text, cv2.LINE_AA)
 
     return sheet
 
