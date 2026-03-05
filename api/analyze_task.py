@@ -59,10 +59,19 @@ async def run_analysis_pipeline(order_id: str, image_paths: list[str], customer_
         blank_family = phase1["blank_family"]
 
         # User-selected blank overrides Phase 1 auto-detection
+        _BLANK_MANUFACTURERS = {
+            "KW1": "Kwikset",
+            "SC1": "Schlage",
+            "SC4": "Schlage",
+            "M1": "Master Lock",
+            "WR5": "Weiser",
+        }
         if blank_family_override and blank_family_override.upper() in ["KW1", "SC1", "SC4", "M1", "WR5"]:
             blank_family = blank_family_override.upper()
             phase1["blank_family"] = blank_family
+            phase1["manufacturer"] = _BLANK_MANUFACTURERS.get(blank_family, "")
             phase1["confidence"] = 1.0   # User told us — treat as ground truth
+            phase1["user_selected"] = True   # Signals results UI that user picked this blank
             print(f"[pipeline] blank_family overridden by user selection: {blank_family}")
 
         if blank_family == "unknown":

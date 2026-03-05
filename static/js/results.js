@@ -29,10 +29,19 @@ function renderResults(data) {
     phase3_result,
   } = data;
 
-  const manufacturer = phase1_result?.manufacturer || blank_code;
-  const confidence   = overall_confidence || 0;
-  const flags        = phase3_result?.flags || [];
-  const cutDetails   = data.phase3_result?.cut_validations || _buildFallbackCuts(bitting);
+  const userSelected   = phase1_result?.user_selected === true;
+  const manufacturer   = phase1_result?.manufacturer || blank_code;
+  const confidence     = overall_confidence || 0;
+  const flags          = phase3_result?.flags || [];
+  const cutDetails     = data.phase3_result?.cut_validations || _buildFallbackCuts(bitting);
+
+  const blankBadge = userSelected
+    ? `<span class="blank-user-badge">✓ You selected this</span>`
+    : `<span class="blank-auto-badge">Auto-detected</span>`;
+
+  const confidenceLabel = userSelected
+    ? `Key type confirmed — OpenCV measured ${bitting?.length || 0} cuts`
+    : `Key blank identified with ${_pct(confidence)} confidence`;
 
   const html = `
     <!-- Key identification card -->
@@ -41,7 +50,8 @@ function renderResults(data) {
         <div class="result-icon">🔑</div>
         <div>
           <div class="result-title">${_escHtml(blank_code || 'Unknown')} — ${_escHtml(manufacturer)}</div>
-          <div class="result-subtitle">Key blank identified with ${_pct(confidence)} confidence</div>
+          <div class="result-subtitle">${confidenceLabel}</div>
+          <div style="margin-top:4px">${blankBadge}</div>
         </div>
       </div>
 
