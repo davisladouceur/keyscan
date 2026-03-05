@@ -53,14 +53,13 @@ async def _startup():
     except Exception as e:
         print(f"⚠ Database seed skipped: {e}")
 
-    # Generate calibration sheet if not already present
+    # Always regenerate calibration sheet on startup so design changes take
+    # effect immediately even if the old PDF is cached on the filesystem
     try:
-        pdf_path = P(__file__).parent.parent / "static" / "calibration_sheet.pdf"
-        if not pdf_path.exists():
-            sys.path.insert(0, str(P(__file__).parent.parent))
-            from scripts.generate_calibration_sheet import main as gen_sheet
-            gen_sheet()
-            print("✓ Calibration sheet generated")
+        sys.path.insert(0, str(P(__file__).parent.parent))
+        from scripts.generate_calibration_sheet import main as gen_sheet
+        gen_sheet()
+        print("✓ Calibration sheet generated")
     except Exception as e:
         print(f"⚠ Calibration sheet generation skipped: {e}")
 
