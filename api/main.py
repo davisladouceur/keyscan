@@ -19,7 +19,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -158,7 +158,6 @@ async def calibration_sheet():
 async def analyze(
     photos: list[UploadFile] = File(..., description="2-3 JPEG photos of the key"),
     email: Optional[str] = Form(None, description="Customer email (optional)"),
-    background_tasks: BackgroundTasks,
 ):
     """
     Accept key photos, create an order, and dispatch the analysis pipeline.
@@ -202,8 +201,8 @@ async def analyze(
     # Create order in DB
     order_id = await create_order(customer_email=email)
 
-    # Run analysis in the background (no Redis/Celery needed on Railway)
-    background_tasks.add_task(run_analysis_pipeline, order_id, saved_paths, email)
+    # Schedule directly on the running event loop — fire and forget
+    asyncio.create_task(run_analysis_pipeline(order_id, saved_paths, email))
 
     return {
         "order_id": order_id,
