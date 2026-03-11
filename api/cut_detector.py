@@ -125,15 +125,23 @@ def measure_blade_geometry(
     if profile_range < 3.0:
         return None   # Flat profile — can't measure cuts
 
-    min_prominence = max(3.0, profile_range * 0.08)
-    # Expect somewhere between 3 and 10 cuts; use a generous min_distance
-    min_distance_px = max(int(2.5 * px_per_mm), 20)
+    # Use a low prominence threshold — shallow cuts should still be detected.
+    # The spec-based measurement will then confirm depth accurately.
+    min_prominence = max(2.0, profile_range * 0.05)
+    # Minimum distance: at least 2mm between cuts (most blanks space ≥ 3mm)
+    min_distance_px = max(int(2.0 * px_per_mm), 15)
 
     peaks, properties = signal.find_peaks(
         profile_from_shoulder,
         prominence=min_prominence,
-        width=3,
+        width=2,
         distance=min_distance_px,
+    )
+    print(
+        f"[geometry] Profile: len={len(profile_from_shoulder)}px, "
+        f"shoulder_x={shoulder_x}px, range={profile_range:.1f}px, "
+        f"min_prom={min_prominence:.1f}, min_dist={min_distance_px}px → "
+        f"{len(peaks)} peaks at {[int(shoulder_x + p) for p in peaks]}"
     )
 
     if len(peaks) < 2:

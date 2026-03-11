@@ -205,12 +205,17 @@ function enterConfirmScreen(orderId, identifyResult) {
     return;
   }
 
-  // Set subtitle based on whether stamp was detected
+  // Set subtitle based on whether stamp was detected or scores are tied
   const topCandidate = candidates[0];
   const subtitleEl = document.getElementById('confirm-subtitle');
   if (subtitleEl) {
     if (topCandidate.stamp_confirmed) {
       subtitleEl.textContent = 'Stamp detected on your key bow — confidence is high.';
+    } else if (
+      candidates.length > 1 &&
+      Math.abs((candidates[0].match_score || 0) - (candidates[1].match_score || 0)) < 0.01
+    ) {
+      subtitleEl.textContent = 'Multiple blanks share the same blade geometry — select the one that matches your key\'s bow shape.';
     } else {
       subtitleEl.textContent = 'Based on geometric measurement of your key.';
     }

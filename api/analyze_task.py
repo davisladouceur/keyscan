@@ -83,6 +83,14 @@ async def run_identify_pipeline(order_id: str, image_paths: list[str], customer_
 
         if geometry_result and geometry_result.get("geometry"):
             geo = geometry_result["geometry"]
+            print(
+                f"[identify] Geometry: cuts={geo.cut_count}, "
+                f"spacing={geo.approx_spacing_mm:.3f}mm, "
+                f"first_cut={geo.approx_first_cut_mm:.3f}mm, "
+                f"blade={geo.blade_length_mm:.1f}mm, "
+                f"shoulder_x={geo.shoulder_x_px}px, "
+                f"peaks={geo.peak_positions_px}"
+            )
             measurements = {
                 "cut_count":             geo.cut_count,
                 "approx_spacing_mm":     geo.approx_spacing_mm,
@@ -96,6 +104,9 @@ async def run_identify_pipeline(order_id: str, image_paths: list[str], customer_
                 blade_length_mm=geo.blade_length_mm,
                 max_results=3,
             )
+            print(f"[identify] Candidates: {[(c['blank_code'], c['match_score']) for c in candidates]}")
+        elif geometry_result and geometry_result.get("error"):
+            print(f"[identify] Geometry error: {geometry_result['error']}")
 
         # Stamp override: put the stamped blank first in the list (score 0)
         if stamp_override:
