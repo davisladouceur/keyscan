@@ -161,6 +161,67 @@ async def correct_order(
         )
 
 
+async def save_identify_results(
+    order_id: str,
+    candidates: list[dict],
+    measurements: dict,
+    phase1_result: dict,
+    image_paths: list[str],
+) -> None:
+    """
+    Save the geometric identification results (candidates + measurements).
+
+    Sets order status to "identified" so the client can show the confirm screen.
+    image_paths is stored so the measure phase can re-load photos without the
+    client re-uploading them.
+    """
+    async with get_session() as session:
+        await session.execute(
+            update(Order)
+            .where(Order.id == uuid.UUID(order_id))
+            .values(
+                status="identified",
+                identify_result={
+                    "candidates": candidates,
+                    "measurements": measurements,
+                    "phase1_result": phase1_result,
+                    "image_paths": image_paths,
+                },
+            )
+        )
+
+
+async def confirm_blank(order_id: str, confirmed_blank: str) -> list[str]:
+    """
+    Record the user-confirmed blank code and transition status to 'measuring'.
+
+    Returns the saved image_paths so the measure pipeline can load them.
+    """
+    async with get_session() as session:
+        result = await session.execute(
+            select(Order).where(Order.id == uuid.UUID(order_id))
+        )
+        order = result.scalar_one_or_none()
+
+    if order is None:
+        raise ValueError(f"Order {order_id} not found")
+
+    identify_result = order.identify_result or {}
+    image_paths = identify_result.get("image_paths", [])
+
+    async with get_session() as session:
+        await session.execute(
+            update(Order)
+            .where(Order.id == uuid.UUID(order_id))
+            .values(
+                status="measuring",
+                blank_code=confirmed_blank,
+            )
+        )
+
+    return image_paths
+
+
 def _order_to_dict(order: Order) -> dict:
     """Convert an ORM Order to a plain dict for API responses."""
     return {
@@ -174,6 +235,7 @@ def _order_to_dict(order: Order) -> dict:
         "human_review": order.human_review,
         "reviewer_notes": order.reviewer_notes,
         "customer_email": order.customer_email,
+        "identify_result": order.identify_result,
         "phase1_result": order.phase1_result,
         "opencv_result": order.opencv_result,
         "phase3_result": order.phase3_result,

@@ -35,7 +35,7 @@ from api.order_manager import (
     get_order,
     get_review_queue,
 )
-from api.analyze_task import run_analysis_pipeline
+from api.analyze_task import run_analysis_pipeline, run_identify_pipeline, run_measure_pipeline
 from contextlib import asynccontextmanager
 
 
@@ -46,8 +46,9 @@ async def _startup():
 
     # Seed key blank data (idempotent — skips rows that already exist)
     try:
-        from db.seed import create_tables, seed_blanks
+        from db.seed import create_tables, run_migrations, seed_blanks
         await create_tables()
+        await run_migrations()
         await seed_blanks()
         print("✓ Database seeded")
     except Exception as e:
@@ -201,13 +202,52 @@ async def analyze(
     # Create order in DB
     order_id = await create_order(customer_email=email)
 
-    # Schedule directly on the running event loop — fire and forget
-    asyncio.create_task(run_analysis_pipeline(order_id, saved_paths, email, blank_family))
+    # Schedule directly on the running event loop — fire and forget.
+    # run_identify_pipeline runs geometric measurement + Claude quality/stamp
+    # and sets order status to "identified" with candidate list.
+    # The client then polls GET /orders/{id}, sees "identified" status,
+    # shows the confirm screen, then calls POST /orders/{id}/confirm.
+    if blank_family:
+        # Legacy path: user already selected blank → skip identify, go straight to measure
+        asyncio.create_task(run_analysis_pipeline(order_id, saved_paths, email, blank_family))
+    else:
+        asyncio.create_task(run_identify_pipeline(order_id, saved_paths, email))
 
     return {
         "order_id": order_id,
         "status": "analyzing",
         "message": "Photos received. Poll GET /orders/{order_id} for results.",
+    }
+
+
+@app.post("/orders/{order_id}/confirm")
+async def confirm_blank(
+    order_id: str,
+    confirmed_blank: str = Form(..., description="User-confirmed blank code (e.g. SC4, KW1)"),
+):
+    """
+    Confirm the blank family and start the bitting measurement pipeline.
+
+    Called by the client after the user selects from the candidate list shown
+    on the confirm screen.  Returns immediately; client polls GET /orders/{id}.
+    """
+    order = await get_order(order_id)
+    if order is None:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    if order["status"] not in ("identified", "analyzing"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Order is in '{order['status']}' status — cannot confirm blank now",
+        )
+
+    asyncio.create_task(run_measure_pipeline(order_id, confirmed_blank.upper()))
+
+    return {
+        "order_id": order_id,
+        "status": "measuring",
+        "confirmed_blank": confirmed_blank.upper(),
+        "message": "Blank confirmed. Poll GET /orders/{order_id} for bitting results.",
     }
 
 

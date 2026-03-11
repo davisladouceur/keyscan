@@ -42,6 +42,10 @@ async def get_blank_spec(blank_code: str) -> Optional[dict]:
     if blank is None:
         return None
 
+    return _blank_to_dict(blank)
+
+
+def _blank_to_dict(blank) -> dict:
     return {
         "blank_code": blank.blank_code,
         "manufacturer": blank.manufacturer,
@@ -55,6 +59,8 @@ async def get_blank_spec(blank_code: str) -> Optional[dict]:
         "cut_spacing_mm": float(blank.cut_spacing_mm or 0),
         "shoulder_height_mm": float(blank.shoulder_height_mm or 0),
         "tip_to_first_cut_mm": float(blank.tip_to_first_cut_mm or 0),
+        "blade_length_mm": float(blank.blade_length_mm) if blank.blade_length_mm else None,
+        "reference_description": blank.reference_description or "",
     }
 
 
@@ -66,20 +72,18 @@ async def get_all_blanks() -> list[dict]:
         )
         blanks = result.scalars().all()
 
-    return [
-        {
-            "blank_code": b.blank_code,
-            "manufacturer": b.manufacturer,
-            "cut_count": b.cut_count,
-            "depth_min": float(b.depth_min),
-            "depth_max": float(b.depth_max),
-            "depth_increment": float(b.depth_increment),
-            "bitting_min": b.bitting_min,
-            "bitting_max": b.bitting_max,
-            "first_cut_from_shoulder_mm": float(b.first_cut_from_shoulder_mm or 0),
-            "cut_spacing_mm": float(b.cut_spacing_mm or 0),
-            "shoulder_height_mm": float(b.shoulder_height_mm or 0),
-            "tip_to_first_cut_mm": float(b.tip_to_first_cut_mm or 0),
-        }
-        for b in blanks
-    ]
+    return [_blank_to_dict(b) for b in blanks]
+
+
+async def get_blanks_by_cut_count(cut_count: int) -> list[dict]:
+    """Return all active blanks with the specified number of cuts."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(KeyBlank).where(
+                KeyBlank.active == True,
+                KeyBlank.cut_count == cut_count,
+            ).order_by(KeyBlank.id)
+        )
+        blanks = result.scalars().all()
+
+    return [_blank_to_dict(b) for b in blanks]

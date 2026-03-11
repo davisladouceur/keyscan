@@ -1,11 +1,19 @@
 """
-Celery task: run the full KeyScan analysis pipeline on uploaded photos.
+KeyScan two-phase analysis pipeline.
 
-Pipeline sequence:
-  1. Claude Phase 1 — blank ID + photo quality
-  2. OpenCV — perspective correction + bitting measurement
-  3. Claude Phase 3 — validation + human review flag
-  4. Save results to database
+Phase A — Identify (fast, ~10s):
+  1. OpenCV geometric measurement → cut count, spacing, first-cut position
+  2. Database matching → ranked blank candidates
+  3. Claude Phase 1 → photo quality + stamp reading (run in parallel with A1/A2)
+  4. Merge: stamp overrides database candidates
+  5. Save candidates to order, status → "identified"
+  → Client shows confirm screen; user picks blank
+
+Phase B — Measure (slower, ~20s, after user confirms blank):
+  1. Load saved photos + confirmed blank spec
+  2. OpenCV spec-based bitting measurement (uses known geometry)
+  3. Claude Phase 3 validation
+  4. Save results, status → "approved" | "review_required"
 """
 
 import asyncio
@@ -21,108 +29,107 @@ from api.aruco_detector import detect_markers
 from api.homography import correct_perspective
 from api.scale_calibrator import calibrate_scale
 from api.blade_isolator import isolate_blade
-from api.cut_detector import detect_cuts
+from api.cut_detector import detect_cuts, measure_blade_geometry
 from api.depth_measurer import measure_cuts, pad_to_expected_count
 from api.confidence_scorer import score_cuts, overall_confidence, needs_human_review
 from api.claude_phase1 import analyze_photos
 from api.claude_phase3 import validate_bitting
 from api.cnc_generator import generate_cnc_instruction
+from api.blank_matcher import match_blank_candidates, select_best_candidate
 
 
-async def run_analysis_pipeline(order_id: str, image_paths: list[str], customer_email: str | None = None, blank_family_override: str | None = None):
+# ── Phase A: Identify ─────────────────────────────────────────────────────── #
+
+async def run_identify_pipeline(order_id: str, image_paths: list[str], customer_email: str | None = None):
     """
-    Full analysis pipeline — async, runs in FastAPI's event loop.
+    Phase A: Geometric measurement + blank candidate matching.
 
-    Called directly as a FastAPI BackgroundTask on Railway (no Redis/Celery needed),
-    or wrapped by the Celery task below for local docker-compose development.
+    Runs OpenCV and database matching concurrently with Claude Phase 1
+    (quality check + stamp reading).  The two results are merged: a stamp
+    overrides the geometric candidates.
 
-    All async DB calls (update_order_status, save_pipeline_results, get_blank_spec)
-    are awaited directly in this function so they always use the same event loop
-    as the SQLAlchemy engine — avoiding asyncpg "attached to a different loop" errors.
-
-    The sync CPU-heavy work (OpenCV, Claude SDK) runs via asyncio.to_thread() so the
-    event loop remains free to serve other requests during processing.
+    Sets order status to "identified" with the candidate list so the
+    client can show the confirm screen.
     """
-    from api.order_manager import update_order_status, save_pipeline_results
-    from api.blank_specs import get_blank_spec
+    from api.order_manager import update_order_status, save_identify_results
 
     try:
         await update_order_status(order_id, "analyzing")
 
-        # ── Phase 1: Claude visual analysis (sync SDK → run in thread) ───── #
-        phase1 = await asyncio.to_thread(analyze_photos, image_paths)
+        best_idx = 0  # will be updated after Phase 1 returns
+        primary_path = image_paths[0]
 
+        # Run OpenCV geometry and Claude Phase 1 concurrently
+        opencv_task  = asyncio.to_thread(_run_geometry_pipeline_sync, primary_path)
+        phase1_task  = asyncio.to_thread(analyze_photos, image_paths)
+
+        geometry_result, phase1 = await asyncio.gather(opencv_task, phase1_task)
+
+        # Photo quality gate
         if phase1["photo_quality"] == "reject":
             await update_order_status(order_id, "rejected")
             return
 
-        blank_family = phase1["blank_family"]
-
-        # User-selected blank overrides Phase 1 auto-detection
-        _BLANK_MANUFACTURERS = {
-            "KW1": "Kwikset",
-            "SC1": "Schlage",
-            "SC4": "Schlage",
-            "M1": "Master Lock",
-            "WR5": "Weiser",
-        }
-        if blank_family_override and blank_family_override.upper() in ["KW1", "SC1", "SC4", "M1", "WR5"]:
-            blank_family = blank_family_override.upper()
-            phase1["blank_family"] = blank_family
-            phase1["manufacturer"] = _BLANK_MANUFACTURERS.get(blank_family, "")
-            phase1["confidence"] = 1.0   # User told us — treat as ground truth
-            phase1["user_selected"] = True   # Signals results UI that user picked this blank
-            print(f"[pipeline] blank_family overridden by user selection: {blank_family}")
-
-        if blank_family == "unknown":
-            # Still try OpenCV but flag for review
-            phase1["confidence"] = min(phase1["confidence"], 0.5)
-
-        # Fetch blank spec here (async DB call in the correct event loop)
-        blank_spec = await get_blank_spec(blank_family)
-        if blank_spec is None:
-            blank_spec = await get_blank_spec("KW1")
-
-        # ── Phase 2: OpenCV measurement pipeline (CPU-heavy → run in thread) #
         best_idx = phase1.get("best_photo_index", 0)
-        primary_path = image_paths[min(best_idx, len(image_paths) - 1)]
 
-        # Pass blank_spec directly so no async DB calls are needed inside the thread
-        opencv_result = await asyncio.to_thread(
-            _run_opencv_pipeline_sync, primary_path, blank_spec
-        )
+        # ── Database candidate matching ──────────────────────────────────── #
+        stamp_override = None
+        blank_stamp = phase1.get("blank_stamp", "").strip().upper()
+        if blank_stamp and blank_stamp != "UNKNOWN":
+            stamp_override = blank_stamp
 
-        # ── Phase 3: Claude validation (sync SDK → run in thread) ─────────── #
-        phase3 = await asyncio.to_thread(
-            validate_bitting,
-            blank_family,
-            opencv_result["bitting"],
-            phase1.get("estimated_bitting", []),
-            opencv_result["overall_confidence"],
-        )
+        candidates = []
+        measurements = {}
 
-        final_bitting = phase3["final_bitting"]
-        human_review = phase3["human_review"]
-        final_confidence = phase3["overall_confidence"]
+        if geometry_result and geometry_result.get("geometry"):
+            geo = geometry_result["geometry"]
+            measurements = {
+                "cut_count":             geo.cut_count,
+                "approx_spacing_mm":     geo.approx_spacing_mm,
+                "approx_first_cut_mm":   geo.approx_first_cut_mm,
+                "blade_length_mm":       geo.blade_length_mm,
+            }
+            candidates = await match_blank_candidates(
+                cut_count=geo.cut_count,
+                approx_spacing_mm=geo.approx_spacing_mm,
+                approx_first_cut_mm=geo.approx_first_cut_mm,
+                blade_length_mm=geo.blade_length_mm,
+                max_results=3,
+            )
 
-        # Generate CNC instructions (pure CPU, fast)
-        cnc = generate_cnc_instruction(blank_family, final_bitting)
+        # Stamp override: put the stamped blank first in the list (score 0)
+        if stamp_override:
+            from api.blank_specs import get_blank_spec
+            stamped_spec = await get_blank_spec(stamp_override)
+            if stamped_spec:
+                stamped_spec["match_score"]   = 0.0
+                stamped_spec["match_details"] = f"Stamp '{stamp_override}' confirmed"
+                stamped_spec["stamp_confirmed"] = True
+                # Remove it from the list if already present, prepend
+                candidates = [c for c in candidates if c["blank_code"] != stamp_override]
+                candidates.insert(0, stamped_spec)
+            else:
+                print(f"[identify] Stamp '{stamp_override}' not in database — ignored")
 
-        # Persist results (async DB call in the correct event loop)
-        await save_pipeline_results(
+        # Fallback: no candidates found — include all blanks as options
+        if not candidates:
+            from api.blank_specs import get_all_blanks
+            all_blanks = await get_all_blanks()
+            candidates = [
+                {**b, "match_score": 99.0, "match_details": "No geometry match — manual selection required", "stamp_confirmed": False}
+                for b in all_blanks
+            ]
+            print(f"[identify] No geometric candidates found — returning all blanks as fallback")
+
+        await save_identify_results(
             order_id=order_id,
-            blank_code=blank_family,
-            bitting=final_bitting,
-            cnc_instruction=cnc["standard"],
+            candidates=candidates,
+            measurements=measurements,
             phase1_result=phase1,
-            opencv_result=opencv_result,
-            phase3_result=phase3,
-            overall_confidence=final_confidence,
-            human_review=human_review,
+            image_paths=image_paths,
         )
 
     except Exception:
-        # Log the full traceback to Railway logs for debugging
         traceback.print_exc()
         try:
             await update_order_status(order_id, "error")
@@ -130,11 +137,148 @@ async def run_analysis_pipeline(order_id: str, image_paths: list[str], customer_
             pass
 
 
+# ── Phase B: Measure ──────────────────────────────────────────────────────── #
+
+async def run_measure_pipeline(order_id: str, confirmed_blank: str):
+    """
+    Phase B: Spec-based bitting measurement using the confirmed blank.
+
+    Loads saved photos from identify_result.image_paths and runs the full
+    OpenCV measurement pipeline with the confirmed blank's spec.
+    """
+    from api.order_manager import update_order_status, save_pipeline_results, confirm_blank
+    from api.blank_specs import get_blank_spec
+
+    try:
+        # Mark order as measuring + save confirmed blank_code + get saved image_paths
+        image_paths = await confirm_blank(order_id, confirmed_blank)
+
+        if not image_paths:
+            await update_order_status(order_id, "error")
+            return
+
+        blank_spec = await get_blank_spec(confirmed_blank)
+        if blank_spec is None:
+            blank_spec = await get_blank_spec("KW1")
+
+        # Load the identify_result for phase1 data (stamps, quality info)
+        from api.order_manager import get_order
+        order_data = await get_order(order_id)
+        identify_result = order_data.get("identify_result") or {}
+        phase1 = identify_result.get("phase1_result", {})
+
+        # ── OpenCV spec-based measurement ────────────────────────────────── #
+        best_idx = phase1.get("best_photo_index", 0)
+        primary_path = image_paths[min(best_idx, len(image_paths) - 1)]
+
+        opencv_result = await asyncio.to_thread(
+            _run_opencv_pipeline_sync, primary_path, blank_spec
+        )
+
+        # ── Phase 3: Claude validation ────────────────────────────────────── #
+        phase3 = await asyncio.to_thread(
+            validate_bitting,
+            confirmed_blank,
+            opencv_result["bitting"],
+            phase1.get("estimated_bitting", []),
+            opencv_result["overall_confidence"],
+        )
+
+        final_bitting   = phase3["final_bitting"]
+        human_review    = phase3["human_review"]
+        final_confidence = phase3["overall_confidence"]
+
+        cnc = generate_cnc_instruction(confirmed_blank, final_bitting)
+
+        await save_pipeline_results(
+            order_id=order_id,
+            blank_code=confirmed_blank,
+            bitting=final_bitting,
+            cnc_instruction=cnc["standard"],
+            phase1_result={**phase1, "blank_family": confirmed_blank, "user_selected": True},
+            opencv_result=opencv_result,
+            phase3_result=phase3,
+            overall_confidence=final_confidence,
+            human_review=human_review,
+        )
+
+    except Exception:
+        traceback.print_exc()
+        try:
+            await update_order_status(order_id, "error")
+        except Exception:
+            pass
+
+
+# ── Legacy single-shot pipeline (kept for backward compat) ────────────────── #
+
+async def run_analysis_pipeline(order_id: str, image_paths: list[str], customer_email: str | None = None, blank_family_override: str | None = None):
+    """
+    Legacy entry point — runs identify + auto-confirms the top candidate.
+
+    Used when the caller supplies a blank_family_override (e.g. from the old
+    manual-selection screen).  Kept so no existing callers break.
+    """
+    if blank_family_override:
+        # Fast path: user told us the blank — skip identify, go straight to measure
+        from api.order_manager import update_order_status, save_pipeline_results
+        from api.blank_specs import get_blank_spec
+
+        try:
+            await update_order_status(order_id, "analyzing")
+            phase1 = await asyncio.to_thread(analyze_photos, image_paths)
+
+            if phase1["photo_quality"] == "reject":
+                await update_order_status(order_id, "rejected")
+                return
+
+            blank_family = blank_family_override.upper()
+            phase1["blank_family"] = blank_family
+            phase1["user_selected"] = True
+
+            blank_spec = await get_blank_spec(blank_family) or await get_blank_spec("KW1")
+
+            best_idx = phase1.get("best_photo_index", 0)
+            primary_path = image_paths[min(best_idx, len(image_paths) - 1)]
+            opencv_result = await asyncio.to_thread(_run_opencv_pipeline_sync, primary_path, blank_spec)
+
+            phase3 = await asyncio.to_thread(
+                validate_bitting, blank_family, opencv_result["bitting"],
+                phase1.get("estimated_bitting", []), opencv_result["overall_confidence"],
+            )
+
+            final_bitting    = phase3["final_bitting"]
+            human_review     = phase3["human_review"]
+            final_confidence = phase3["overall_confidence"]
+            cnc = generate_cnc_instruction(blank_family, final_bitting)
+
+            await save_pipeline_results(
+                order_id=order_id, blank_code=blank_family, bitting=final_bitting,
+                cnc_instruction=cnc["standard"], phase1_result=phase1,
+                opencv_result=opencv_result, phase3_result=phase3,
+                overall_confidence=final_confidence, human_review=human_review,
+            )
+        except Exception:
+            traceback.print_exc()
+            try:
+                await update_order_status(order_id, "error")
+            except Exception:
+                pass
+    else:
+        # New path: run geometric identify → auto-confirm top candidate
+        await run_identify_pipeline(order_id, image_paths, customer_email)
+        from api.order_manager import get_order
+        order_data = await get_order(order_id)
+        if order_data and order_data["status"] == "identified":
+            candidates = (order_data.get("identify_result") or {}).get("candidates", [])
+            top_blank = candidates[0]["blank_code"] if candidates else "KW1"
+            await run_measure_pipeline(order_id, top_blank)
+
+
 @celery_app.task(bind=True, max_retries=2)
 def run_analysis(self, order_id: str, image_paths: list[str], customer_email: str | None = None, blank_family_override: str | None = None):
     """
     Celery task wrapper — used only in local docker-compose development.
-    On Railway, run_analysis_pipeline is called directly via FastAPI BackgroundTasks.
     """
     try:
         asyncio.run(run_analysis_pipeline(order_id, image_paths, customer_email, blank_family_override))
@@ -156,6 +300,35 @@ def _load_image_exif_aware(image_path: str) -> np.ndarray:
     if pil_img.mode != "RGB":
         pil_img = pil_img.convert("RGB")
     return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+
+
+def _run_geometry_pipeline_sync(image_path: str) -> dict:
+    """
+    Run the geometric pre-measurement pipeline synchronously (Phase A).
+
+    Does NOT need a blank_spec — uses peak-based detection to measure
+    cut count, spacing, and first-cut position for database matching.
+    Returns a dict with 'geometry' (BladeGeometry dataclass) and 'error'.
+    """
+    image = _load_image_exif_aware(image_path)
+    if image is None or image.size == 0:
+        return {"geometry": None, "error": f"Could not read image: {image_path}"}
+
+    marker_corners = detect_markers(image)
+    if marker_corners is None:
+        return {"geometry": None, "error": "ArUco markers not detected"}
+
+    corrected  = correct_perspective(image, marker_corners)
+    scale_info = calibrate_scale(corrected)
+    blade_result = isolate_blade(corrected)
+
+    if blade_result is None:
+        return {"geometry": None, "error": "Key blade not detected in placement zone"}
+
+    px_per_mm = scale_info.get("px_per_mm")
+    geometry = measure_blade_geometry(blade_result.blade_gray, px_per_mm)
+
+    return {"geometry": geometry, "error": None}
 
 
 def _run_opencv_pipeline_sync(image_path: str, blank_spec: dict) -> dict:

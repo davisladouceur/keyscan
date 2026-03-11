@@ -29,6 +29,17 @@ class DetectedCut:
     width_px: float     # Width of the cut valley in pixels
 
 
+@dataclass
+class BladeGeometry:
+    """Geometric measurements extracted before blank identification."""
+    cut_count: int
+    approx_spacing_mm: float       # mean centre-to-centre spacing between cuts
+    approx_first_cut_mm: float     # shoulder to first cut distance
+    blade_length_mm: float         # shoulder to blade tip
+    shoulder_x_px: int             # pixel position of shoulder start
+    peak_positions_px: list[int]   # raw peak x-positions for debugging
+
+
 def detect_cuts(
     blade_gray: np.ndarray,
     expected_cut_count: int,
@@ -66,6 +77,93 @@ def detect_cuts(
         return _detect_cuts_spec_based(smoothed, baseline_y, blank_spec)
 
     return _detect_cuts_peak_based(smoothed, baseline_y, expected_cut_count)
+
+
+# ── Geometric pre-measurement (no blank_spec needed) ────────────────────────
+
+
+def measure_blade_geometry(
+    blade_gray: np.ndarray,
+    px_per_mm: float | None = None,
+) -> BladeGeometry | None:
+    """
+    Extract key geometric measurements from the blade crop without needing
+    a blank_spec. Used in the first pass of the identification pipeline to
+    obtain cut_count, spacing, and first_cut for database candidate matching.
+
+    Returns None if the blade profile is too noisy to measure reliably.
+    """
+    if px_per_mm is None:
+        px_per_mm = PX_PER_MM
+
+    profile  = _extract_edge_profile(blade_gray)
+    smoothed = _smooth_profile(profile)
+    baseline_y = float(np.percentile(smoothed, 5))
+
+    # Detect shoulder start using the same logic as spec-based positioning
+    FLAT_THRESHOLD_PX = 15.0
+    MIN_FLAT_COLS = int(1.5 * px_per_mm)
+    shoulder_x = 0
+    consecutive_flat = 0
+    # Scan up to 40mm from the left edge to find the shoulder
+    scan_limit = min(int(40 * px_per_mm), len(smoothed))
+    for x in range(scan_limit):
+        if abs(smoothed[x] - baseline_y) <= FLAT_THRESHOLD_PX:
+            consecutive_flat += 1
+            if consecutive_flat >= MIN_FLAT_COLS:
+                shoulder_x = max(0, x - MIN_FLAT_COLS + 1)
+                break
+        else:
+            consecutive_flat = 0
+
+    # Blade length from shoulder to profile end
+    blade_length_mm = (len(smoothed) - shoulder_x) / px_per_mm
+
+    # Run peak detection on the region to the right of the shoulder
+    profile_from_shoulder = smoothed[shoulder_x:]
+    profile_range = profile_from_shoulder.max() - profile_from_shoulder.min()
+    if profile_range < 3.0:
+        return None   # Flat profile — can't measure cuts
+
+    min_prominence = max(3.0, profile_range * 0.08)
+    # Expect somewhere between 3 and 10 cuts; use a generous min_distance
+    min_distance_px = max(int(2.5 * px_per_mm), 20)
+
+    peaks, properties = signal.find_peaks(
+        profile_from_shoulder,
+        prominence=min_prominence,
+        width=3,
+        distance=min_distance_px,
+    )
+
+    if len(peaks) < 2:
+        # Not enough peaks to compute spacing — return with single peak data
+        cut_count = len(peaks)
+        first_cut_mm = float(peaks[0]) / px_per_mm if len(peaks) == 1 else 0.0
+        return BladeGeometry(
+            cut_count=cut_count,
+            approx_spacing_mm=0.0,
+            approx_first_cut_mm=first_cut_mm,
+            blade_length_mm=round(blade_length_mm, 2),
+            shoulder_x_px=shoulder_x,
+            peak_positions_px=[(shoulder_x + int(p)) for p in peaks],
+        )
+
+    # Convert peak positions back to absolute coordinates
+    abs_peaks = [shoulder_x + int(p) for p in peaks]
+
+    first_cut_mm = float(peaks[0]) / px_per_mm
+    spacings_px  = np.diff(peaks)
+    approx_spacing_mm = float(np.mean(spacings_px)) / px_per_mm
+
+    return BladeGeometry(
+        cut_count=len(peaks),
+        approx_spacing_mm=round(approx_spacing_mm, 3),
+        approx_first_cut_mm=round(first_cut_mm, 3),
+        blade_length_mm=round(blade_length_mm, 2),
+        shoulder_x_px=shoulder_x,
+        peak_positions_px=abs_peaks,
+    )
 
 
 # ── Spec-based (primary) ────────────────────────────────────────────────────

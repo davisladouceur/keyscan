@@ -43,9 +43,13 @@ class KeyBlank(Base):
     cut_spacing_mm = Column(Numeric(5, 3))
     shoulder_height_mm = Column(Numeric(5, 3))
     tip_to_first_cut_mm = Column(Numeric(5, 3))
+    # Total blade length shoulder-to-tip (used by geometric blank matcher)
+    blade_length_mm = Column(Numeric(5, 2))
 
     active = Column(Boolean, default=True)
     notes = Column(Text)
+    # Short human-readable label for UI candidate display
+    reference_description = Column(Text)
 
 
 class Order(Base):
@@ -69,6 +73,7 @@ class Order(Base):
     cnc_instruction = Column(Text)
 
     # Raw pipeline outputs stored as JSON blobs for debugging / review
+    identify_result = Column(JSONB)   # geometric pre-measure: candidates + measurements
     phase1_result = Column(JSONB)
     opencv_result = Column(JSONB)
     phase3_result = Column(JSONB)

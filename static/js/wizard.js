@@ -4,11 +4,12 @@
  * Screens (in order):
  *   1. loading        — Wait for opencv.js
  *   2. instructions   — How it works + calibration sheet download
- *   3. blank          — User selects key blank type (KW1/SC1/SC4/M1/WR5 or auto)
- *   4. camera         — Live capture with real-time feedback (3 photos)
- *   5. review         — Preview all 3 photos before submitting
- *   6. analyzing      — Show spinner while backend processes
- *   7. results        — Display bitting result
+ *   3. camera         — Live capture with real-time feedback (3 photos)
+ *   4. review         — Preview all 3 photos before submitting
+ *   5. analyzing      — Show spinner while backend identifies blank
+ *   6. confirm        — Show top candidate; user confirms or picks alternative
+ *   7. analyzing      — Show spinner while backend measures bitting
+ *   8. results        — Display bitting result
  */
 
 'use strict';
@@ -17,9 +18,9 @@
 
 const capturedPhotos = [];   // [{blob, url}, ...]
 const MAX_PHOTOS = 3;
-let opencvReady  = false;
-let pollTimer    = null;
-let selectedBlank = null;    // blank code string (e.g. 'SC4'), '' = auto-detect, null = nothing chosen yet
+let opencvReady       = false;
+let pollTimer         = null;
+let selectedConfirmBlank = null;  // blank code chosen on confirm screen
 
 // ── Initialise ────────────────────────────────────────────────────────────── //
 
@@ -29,22 +30,11 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('loading-message').textContent = 'Loading camera system…';
 
   // Wire up buttons
-  document.getElementById('btn-start-camera').addEventListener('click', enterBlankScreen);
-  document.getElementById('btn-blank-continue').addEventListener('click', enterCameraScreen);
+  document.getElementById('btn-start-camera').addEventListener('click', enterCameraScreen);
   document.getElementById('btn-capture').addEventListener('click', () => triggerCapture());
   document.getElementById('btn-retake').addEventListener('click', enterCameraScreen);
   document.getElementById('btn-submit').addEventListener('click', submitPhotos);
   document.getElementById('btn-new-key').addEventListener('click', resetWizard);
-
-  // Wire up blank selection cards
-  document.querySelectorAll('.blank-card').forEach(card => {
-    card.addEventListener('click', () => {
-      document.querySelectorAll('.blank-card').forEach(c => c.classList.remove('selected'));
-      card.classList.add('selected');
-      selectedBlank = card.dataset.blank;  // '' for auto-detect, 'SC4' etc. for explicit
-      document.getElementById('btn-blank-continue').disabled = false;
-    });
-  });
 });
 
 document.addEventListener('opencv-ready', () => {
@@ -56,7 +46,7 @@ document.addEventListener('opencv-ready', () => {
 // If opencv.js fails to load after 8 seconds, continue anyway (feedback won't work)
 setTimeout(() => {
   if (!opencvReady) {
-    opencvReady = true; // Mark ready so the app still works
+    opencvReady = true;
     showScreen('instructions');
   }
 }, 8000);
@@ -67,13 +57,6 @@ function showScreen(name) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   const target = document.getElementById(`${name}-screen`);
   if (target) target.classList.add('active');
-}
-
-function enterBlankScreen() {
-  selectedBlank = null;
-  document.querySelectorAll('.blank-card').forEach(c => c.classList.remove('selected'));
-  document.getElementById('btn-blank-continue').disabled = true;
-  showScreen('blank');
 }
 
 async function enterCameraScreen() {
@@ -125,10 +108,11 @@ async function triggerCapture() {
   }
 }
 
-// ── Submit ────────────────────────────────────────────────────────────────── //
+// ── Submit (Phase A: Identify) ────────────────────────────────────────────── //
 
 async function submitPhotos() {
   showScreen('analyzing');
+  document.getElementById('poll-status').textContent = 'Measuring key geometry…';
 
   const email = document.getElementById('email-input')?.value || '';
   const form  = new FormData();
@@ -136,8 +120,6 @@ async function submitPhotos() {
     form.append('photos', p.blob, `photo_${i}.jpg`);
   });
   if (email) form.append('email', email);
-  // Pass the explicitly selected blank (non-empty string means user chose it)
-  if (selectedBlank) form.append('blank_family', selectedBlank);
 
   let orderId;
   try {
@@ -154,9 +136,11 @@ async function submitPhotos() {
     return;
   }
 
-  // Poll for results
+  // Poll for "identified" status → show confirm screen
   _pollForResults(orderId);
 }
+
+// ── Polling ───────────────────────────────────────────────────────────────── //
 
 function _pollForResults(orderId) {
   let attempts = 0;
@@ -178,7 +162,18 @@ function _pollForResults(orderId) {
       const res  = await fetch(`/orders/${orderId}`);
       const data = await res.json();
 
-      if (data.status === 'analyzing' || data.status === 'pending') return; // Still working
+      if (data.status === 'analyzing' || data.status === 'pending') return;
+
+      // Identify phase complete → show confirm screen
+      if (data.status === 'identified') {
+        clearInterval(pollTimer);
+        const identifyResult = data.identify_result || {};
+        enterConfirmScreen(orderId, identifyResult);
+        return;
+      }
+
+      // Measure phase still running
+      if (data.status === 'measuring') return;
 
       clearInterval(pollTimer);
 
@@ -187,6 +182,7 @@ function _pollForResults(orderId) {
         return;
       }
 
+      // Final result
       showScreen('results');
       if (typeof renderResults === 'function') renderResults(data);
 
@@ -195,6 +191,114 @@ function _pollForResults(orderId) {
     }
   }, 2000);
 }
+
+// ── Confirm Screen (Phase B: Measure) ────────────────────────────────────── //
+
+function enterConfirmScreen(orderId, identifyResult) {
+  const candidates = identifyResult.candidates || [];
+  const container  = document.getElementById('confirm-candidates');
+  if (!container) return;
+
+  if (candidates.length === 0) {
+    container.innerHTML = '<p style="text-align:center;color:#888">No matching blanks found — please retake photos.</p>';
+    showScreen('confirm');
+    return;
+  }
+
+  // Set subtitle based on whether stamp was detected
+  const topCandidate = candidates[0];
+  const subtitleEl = document.getElementById('confirm-subtitle');
+  if (subtitleEl) {
+    if (topCandidate.stamp_confirmed) {
+      subtitleEl.textContent = 'Stamp detected on your key bow — confidence is high.';
+    } else {
+      subtitleEl.textContent = 'Based on geometric measurement of your key.';
+    }
+  }
+
+  // Build candidate rows
+  let html = '<div class="confirm-candidate-list">';
+  candidates.forEach((c, i) => {
+    const isTop    = i === 0;
+    const desc     = c.reference_description ? _escHtml(c.reference_description) : '';
+    const cuts     = c.cut_count ? `${c.cut_count} cuts` : '';
+    const matchStr = c.stamp_confirmed
+      ? ''
+      : (c.match_score !== undefined && c.match_score < 90
+          ? `· score ${c.match_score.toFixed(2)}`
+          : '· manual selection');
+    const stampBadge = c.stamp_confirmed
+      ? `<span class="confirm-stamp-badge">✓ Stamp read from key</span>`
+      : '';
+
+    html += `
+      <div class="confirm-candidate${isTop ? ' top-pick selected' : ''}"
+           data-blank="${_escHtml(c.blank_code)}"
+           onclick="_selectCandidate('${_escHtml(c.blank_code)}')">
+        <div class="confirm-radio${isTop ? ' checked' : ''}"></div>
+        <div class="confirm-candidate-info">
+          <div class="confirm-blank-code">${_escHtml(c.blank_code)}</div>
+          ${desc ? `<div class="confirm-blank-desc">${desc}</div>` : ''}
+          <div class="confirm-blank-meta">${cuts}${matchStr}</div>
+          ${stampBadge}
+        </div>
+      </div>`;
+  });
+  html += '</div>';
+
+  container.innerHTML = html;
+
+  // Pre-select top candidate
+  selectedConfirmBlank = topCandidate.blank_code;
+
+  // Wire confirm button
+  const confirmBtn = document.getElementById('btn-confirm-blank');
+  if (confirmBtn) {
+    // Remove any previous listener by replacing the element
+    const fresh = confirmBtn.cloneNode(true);
+    confirmBtn.parentNode.replaceChild(fresh, confirmBtn);
+    fresh.addEventListener('click', () => _confirmAndMeasure(orderId));
+  }
+
+  showScreen('confirm');
+}
+
+function _selectCandidate(blankCode) {
+  selectedConfirmBlank = blankCode;
+  document.querySelectorAll('.confirm-candidate').forEach(el => {
+    const isSelected = el.dataset.blank === blankCode;
+    el.classList.toggle('selected', isSelected);
+    const radio = el.querySelector('.confirm-radio');
+    if (radio) radio.classList.toggle('checked', isSelected);
+  });
+}
+
+async function _confirmAndMeasure(orderId) {
+  if (!selectedConfirmBlank) return;
+
+  showScreen('analyzing');
+  const statusEl = document.getElementById('poll-status');
+  if (statusEl) statusEl.textContent = 'Measuring cut depths…';
+
+  try {
+    const form = new FormData();
+    form.append('confirmed_blank', selectedConfirmBlank);
+
+    const res = await fetch(`/orders/${orderId}/confirm`, { method: 'POST', body: form });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.detail || 'Confirmation failed');
+    }
+  } catch (err) {
+    _showAnalysisError(err.message);
+    return;
+  }
+
+  // Poll for final bitting result
+  _pollForResults(orderId);
+}
+
+// ── Error ─────────────────────────────────────────────────────────────────── //
 
 function _showAnalysisError(message) {
   showScreen('results');
@@ -214,6 +318,7 @@ function _showAnalysisError(message) {
 
 function resetWizard() {
   capturedPhotos.length = 0;
+  selectedConfirmBlank = null;
   if (pollTimer) clearInterval(pollTimer);
   showScreen('instructions');
 }
@@ -239,7 +344,7 @@ function _renderPhotoGrid() {
 }
 
 function _escHtml(str) {
-  return str
+  return String(str)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')

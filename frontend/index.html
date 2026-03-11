@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>KeyScan — AI Key Duplication</title>
-  <link rel="stylesheet" href="/static/css/main.css?v=6" />
+  <link rel="stylesheet" href="/static/css/main.css?v=7" />
 </head>
 <body>
 
@@ -51,50 +51,19 @@
   </div>
 </div>
 
-<!-- ── Step 1b: Key Blank Selection ────────────────────────────────────── -->
-<div id="blank-screen" class="screen">
+<!-- ── Step 2b: Blank Confirm ──────────────────────────────────────────── -->
+<div id="confirm-screen" class="screen">
   <div class="container">
     <div class="logo">🔑 KeyScan</div>
-    <h1>What Type of Key?</h1>
-    <p class="subtitle">Select your key blank for accurate results. Check the thick end of your key for a stamped code.</p>
+    <h1>We Think This Is…</h1>
+    <p class="subtitle" id="confirm-subtitle">Based on geometric measurement of your key.</p>
 
-    <div class="blank-grid" id="blank-grid">
-      <button class="blank-card" data-blank="KW1">
-        <div class="blank-code">KW1</div>
-        <div class="blank-mfr">Kwikset</div>
-        <div class="blank-cuts">5 cuts</div>
-      </button>
-      <button class="blank-card" data-blank="SC1">
-        <div class="blank-code">SC1</div>
-        <div class="blank-mfr">Schlage B</div>
-        <div class="blank-cuts">6 cuts</div>
-      </button>
-      <button class="blank-card" data-blank="SC4">
-        <div class="blank-code">SC4</div>
-        <div class="blank-mfr">Schlage C</div>
-        <div class="blank-cuts">6 cuts</div>
-      </button>
-      <button class="blank-card" data-blank="M1">
-        <div class="blank-code">M1</div>
-        <div class="blank-mfr">Master</div>
-        <div class="blank-cuts">4 cuts</div>
-      </button>
-      <button class="blank-card" data-blank="WR5">
-        <div class="blank-code">WR5</div>
-        <div class="blank-mfr">Weiser</div>
-        <div class="blank-cuts">5 cuts</div>
-      </button>
-      <button class="blank-card blank-card-auto" data-blank="">
-        <div class="blank-code">?</div>
-        <div class="blank-mfr">Not sure</div>
-        <div class="blank-cuts">Auto-detect</div>
-      </button>
-    </div>
+    <div id="confirm-candidates"></div>
 
-    <button class="btn btn-primary" id="btn-blank-continue" disabled>
-      📷 Start Camera
+    <button class="btn btn-primary" id="btn-confirm-blank">
+      ✓ Confirm and Measure
     </button>
-    <p class="hint">Tip: look for a code stamped on the thick rounded end of your key.</p>
+    <p class="hint">The system measured your key's cut geometry and matched it to our database.<br>Select the correct blank if the suggestion is wrong.</p>
   </div>
 </div>
 
@@ -212,11 +181,11 @@
 </div>
 
 <!-- ── opencv.js (loaded async, triggers feedback loop when ready) ──────── -->
-<script src="/static/js/feedback.js?v=6"></script>
-<script src="/static/js/overlay.js?v=6"></script>
-<script src="/static/js/camera.js?v=6"></script>
-<script src="/static/js/wizard.js?v=6"></script>
-<script src="/static/js/results.js?v=6"></script>
+<script src="/static/js/feedback.js?v=7"></script>
+<script src="/static/js/overlay.js?v=7"></script>
+<script src="/static/js/camera.js?v=7"></script>
+<script src="/static/js/wizard.js?v=7"></script>
+<script src="/static/js/results.js?v=7"></script>
 
 <script async src="https://docs.opencv.org/4.8.0/opencv.js" onload="onOpenCvReady()"></script>
 
