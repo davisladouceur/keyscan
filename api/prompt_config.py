@@ -6,13 +6,13 @@ pipeline logic. Each prompt has a versioned comment for tracking.
 """
 
 # ── Phase 1: Quality Check + Stamp Reading ────────────────────────────────── #
-# v4.0 — Simplified: blank ID is now done by geometric measurement + database
-#         matching. Phase 1 focuses on photo quality and stamp reading only.
+# v4.1 — Updated for 6-photo capture (3 photos per side); stamp reading unchanged.
 
 PHASE1_SYSTEM_PROMPT = """\
 You are a quality-control and data-extraction system for the KeyScan platform.
-You receive 2–3 photographs of a house key placed on a printed calibration
+You receive 2–6 photographs of a house key placed on a printed calibration
 sheet (4 ArUco corner markers, dashed "PLACE KEY HERE" rectangle in centre).
+Photos may show both sides of the key (Side A and Side B).
 
 The blank family is identified separately by geometric measurement — your job
 is to check photo quality and read any stamps visible on the key.

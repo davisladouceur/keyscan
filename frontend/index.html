@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>KeyScan — AI Key Duplication</title>
-  <link rel="stylesheet" href="/static/css/main.css?v=7" />
+  <link rel="stylesheet" href="/static/css/main.css?v=8" />
 </head>
 <body>
 
@@ -112,11 +112,29 @@
       <div id="progress-bar" class="progress-bar"></div>
     </div>
 
-    <!-- Photo counter -->
-    <div class="photo-counter">
+    <!-- Photo counter — Side 1 (top row) -->
+    <div class="photo-counter photo-counter-side1">
+      <span class="side-label">A</span>
       <div id="photo-thumb-0" class="photo-thumb empty">1</div>
       <div id="photo-thumb-1" class="photo-thumb empty">2</div>
       <div id="photo-thumb-2" class="photo-thumb empty">3</div>
+    </div>
+    <!-- Photo counter — Side 2 (bottom row, faded until active) -->
+    <div class="photo-counter photo-counter-side2">
+      <span class="side-label">B</span>
+      <div id="photo-thumb-3" class="photo-thumb empty side2">4</div>
+      <div id="photo-thumb-4" class="photo-thumb empty side2">5</div>
+      <div id="photo-thumb-5" class="photo-thumb empty side2">6</div>
+    </div>
+
+    <!-- Flip overlay: shown after 3rd photo -->
+    <div id="flip-overlay" class="flip-overlay hidden">
+      <div class="flip-content">
+        <div class="flip-emoji">🔄</div>
+        <h2>Side 1 Done!</h2>
+        <p>Flip your key to the other side, place it back in the dashed box, and take 3 more photos.</p>
+        <button class="btn btn-primary" id="btn-flip-continue">📷 Capture Side 2</button>
+      </div>
     </div>
 
     <!-- Countdown overlay -->
@@ -139,7 +157,7 @@
 <div id="review-screen" class="screen">
   <div class="container">
     <h2>Review Your Photos</h2>
-    <p>Make sure your key is clearly visible in all 3 photos with good lighting.</p>
+    <p>Make sure your key is clearly visible from both sides.</p>
 
     <div class="photo-grid" id="photo-grid"></div>
 
@@ -181,11 +199,11 @@
 </div>
 
 <!-- ── opencv.js (loaded async, triggers feedback loop when ready) ──────── -->
-<script src="/static/js/feedback.js?v=7"></script>
-<script src="/static/js/overlay.js?v=7"></script>
-<script src="/static/js/camera.js?v=7"></script>
-<script src="/static/js/wizard.js?v=7"></script>
-<script src="/static/js/results.js?v=7"></script>
+<script src="/static/js/feedback.js?v=8"></script>
+<script src="/static/js/overlay.js?v=8"></script>
+<script src="/static/js/camera.js?v=8"></script>
+<script src="/static/js/wizard.js?v=8"></script>
+<script src="/static/js/results.js?v=8"></script>
 
 <script async src="https://docs.opencv.org/4.8.0/opencv.js" onload="onOpenCvReady()"></script>
 

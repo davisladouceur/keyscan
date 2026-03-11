@@ -228,27 +228,39 @@ p  { line-height: 1.6; color: #555; margin-bottom: 12px; }
   transition: width 0.3s, background 0.3s;
 }
 
-/* ── Photo Thumbnails ────────────────────────────────────────────────────── */
+/* ── Photo Thumbnails (two rows: Side A + Side B) ────────────────────────── */
 
 .photo-counter {
   position: absolute;
-  bottom: 100px;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
-  gap: 12px;
+  align-items: center;
+  gap: 8px;
+}
+
+.photo-counter-side1 { bottom: 118px; }
+.photo-counter-side2 { bottom: 66px; }
+
+.side-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: rgba(255,255,255,0.55);
+  width: 16px;
+  text-align: center;
+  letter-spacing: 0.5px;
 }
 
 .photo-thumb {
-  width: 50px;
-  height: 50px;
+  width: 46px;
+  height: 46px;
   border-radius: 8px;
   border: 2px solid rgba(255,255,255,0.4);
   display: flex;
   align-items: center;
   justify-content: center;
   color: rgba(255,255,255,0.5);
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 700;
   overflow: hidden;
   background: rgba(0,0,0,0.4);
@@ -262,6 +274,52 @@ p  { line-height: 1.6; color: #555; margin-bottom: 12px; }
 
 .photo-thumb.captured {
   border-color: var(--green);
+}
+
+/* Side 2 thumbnails are dimmed until active */
+.photo-thumb.side2:not(.captured) {
+  opacity: 0.45;
+}
+
+/* ── Flip Overlay ─────────────────────────────────────────────────────────── */
+
+.flip-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.88);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.flip-overlay.hidden { display: none; }
+
+.flip-content {
+  background: #fff;
+  border-radius: 16px;
+  padding: 32px 24px;
+  text-align: center;
+  max-width: 300px;
+  margin: 20px;
+}
+
+.flip-emoji {
+  font-size: 52px;
+  margin-bottom: 12px;
+  line-height: 1;
+}
+
+.flip-content h2 {
+  color: var(--green);
+  margin-bottom: 10px;
+}
+
+.flip-content p {
+  font-size: 15px;
+  line-height: 1.6;
+  color: #555;
+  margin-bottom: 20px;
 }
 
 /* ── Countdown Overlay ───────────────────────────────────────────────────── */
@@ -697,4 +755,45 @@ p  { line-height: 1.6; color: #555; margin-bottom: 12px; }
   background: rgba(26, 122, 74, 0.12);
   color: var(--green);
   border: 1px solid rgba(26, 122, 74, 0.3);
+}
+
+/* ── System prediction badge + training input ────────────────────────────── */
+
+.system-prediction {
+  background: #f0f4ff;
+  border: 1px solid #c8d8ff;
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #444;
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+
+.training-other {
+  margin-top: 14px;
+}
+
+.training-label {
+  display: block;
+  font-size: 13px;
+  color: var(--grey);
+  margin-bottom: 6px;
+}
+
+.other-blank-input {
+  width: 100%;
+  padding: 11px 14px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 16px;
+  font-family: monospace;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  transition: border-color 0.15s;
+}
+
+.other-blank-input:focus {
+  outline: none;
+  border-color: var(--green);
 }

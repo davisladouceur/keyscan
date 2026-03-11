@@ -171,10 +171,10 @@ async def analyze(
             status_code=422,
             detail="At least 2 photos are required for accurate measurement",
         )
-    if len(photos) > 3:
+    if len(photos) > 6:
         raise HTTPException(
             status_code=422,
-            detail="Maximum 3 photos accepted",
+            detail="Maximum 6 photos accepted (3 per side)",
         )
 
     # Validate file types and sizes

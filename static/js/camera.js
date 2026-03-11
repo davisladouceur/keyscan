@@ -53,6 +53,11 @@ async function startCamera() {
     torchBtn.classList.remove('torch-on');
     torchBtn.title = 'Turn on flashlight';
   }
+
+  // Auto-enable torch immediately — consistent lighting improves measurement accuracy
+  if (_isTorchSupported()) {
+    setTimeout(() => toggleTorch(), 300);
+  }
 }
 
 /** Stop all camera tracks (torch turns off automatically with the track). */

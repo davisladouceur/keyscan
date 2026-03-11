@@ -4,11 +4,11 @@
  * Screens (in order):
  *   1. loading        — Wait for opencv.js
  *   2. instructions   — How it works + calibration sheet download
- *   3. camera         — Live capture with real-time feedback (3 photos)
- *   4. review         — Preview all 3 photos before submitting
- *   5. analyzing      — Show spinner while backend identifies blank
- *   6. confirm        — Show top candidate; user confirms or picks alternative
- *   7. analyzing      — Show spinner while backend measures bitting
+ *   3. camera         — Live capture: 3 photos of Side A, then Side B (6 total)
+ *   4. review         — Preview all photos before submitting
+ *   5. analyzing      — Spinner while backend identifies blank
+ *   6. confirm        — Show system prediction; user confirms or picks actual blank
+ *   7. analyzing      — Spinner while backend measures bitting
  *   8. results        — Display bitting result
  */
 
@@ -17,33 +17,33 @@
 // ── State ────────────────────────────────────────────────────────────────── //
 
 const capturedPhotos = [];   // [{blob, url}, ...]
-const MAX_PHOTOS = 3;
-let opencvReady       = false;
-let pollTimer         = null;
-let selectedConfirmBlank = null;  // blank code chosen on confirm screen
+const MAX_PHOTOS     = 6;    // 3 per side
+
+let opencvReady          = false;
+let pollTimer            = null;
+let selectedConfirmBlank = null;   // blank code chosen on confirm screen
 
 // ── Initialise ────────────────────────────────────────────────────────────── //
 
 document.addEventListener('DOMContentLoaded', () => {
-  // Show loading screen until OpenCV is ready
   showScreen('loading');
   document.getElementById('loading-message').textContent = 'Loading camera system…';
 
-  // Wire up buttons
   document.getElementById('btn-start-camera').addEventListener('click', enterCameraScreen);
   document.getElementById('btn-capture').addEventListener('click', () => triggerCapture());
   document.getElementById('btn-retake').addEventListener('click', enterCameraScreen);
   document.getElementById('btn-submit').addEventListener('click', submitPhotos);
   document.getElementById('btn-new-key').addEventListener('click', resetWizard);
+
+  const flipBtn = document.getElementById('btn-flip-continue');
+  if (flipBtn) flipBtn.addEventListener('click', _hideFlipOverlay);
 });
 
 document.addEventListener('opencv-ready', () => {
   opencvReady = true;
-  // Short delay so OpenCV internal init can complete
   setTimeout(() => showScreen('instructions'), 400);
 });
 
-// If opencv.js fails to load after 8 seconds, continue anyway (feedback won't work)
 setTimeout(() => {
   if (!opencvReady) {
     opencvReady = true;
@@ -62,6 +62,7 @@ function showScreen(name) {
 async function enterCameraScreen() {
   capturedPhotos.length = 0;
   _resetThumbnails();
+  _hideFlipOverlay();
 
   showScreen('camera');
 
@@ -85,26 +86,53 @@ function enterReviewScreen() {
 
 // ── Capture ───────────────────────────────────────────────────────────────── //
 
-/** Called by feedback.js auto-capture OR the manual capture button. */
 async function triggerCapture() {
   if (capturedPhotos.length >= MAX_PHOTOS) return;
 
   const { blob, url } = await capturePhoto();
   capturedPhotos.push({ blob, url });
+  const idx = capturedPhotos.length - 1;
 
   // Update thumbnail
-  const thumb = document.getElementById(`photo-thumb-${capturedPhotos.length - 1}`);
+  const thumb = document.getElementById(`photo-thumb-${idx}`);
   if (thumb) {
     thumb.classList.add('captured');
+    thumb.classList.remove('side2');  // remove dim class
     const img = document.createElement('img');
     img.src = url;
     thumb.innerHTML = '';
     thumb.appendChild(img);
   }
 
+  // After Side A complete → show flip overlay
+  if (capturedPhotos.length === 3) {
+    stopFeedbackLoop();
+    setTimeout(_showFlipOverlay, 500);
+    return;
+  }
+
+  // After both sides complete → go to review
   if (capturedPhotos.length >= MAX_PHOTOS) {
-    // Small delay so user sees the last thumbnail flash
     setTimeout(enterReviewScreen, 700);
+  }
+}
+
+// ── Flip overlay ──────────────────────────────────────────────────────────── //
+
+function _showFlipOverlay() {
+  const overlay = document.getElementById('flip-overlay');
+  if (overlay) overlay.classList.remove('hidden');
+}
+
+function _hideFlipOverlay() {
+  const overlay = document.getElementById('flip-overlay');
+  if (overlay) overlay.classList.add('hidden');
+
+  // Resume feedback loop for Side B if camera is still running
+  if (capturedPhotos.length === 3) {
+    const videoEl  = document.getElementById('video');
+    const canvasEl = document.getElementById('overlay-canvas');
+    if (opencvReady) startFeedbackLoop(videoEl, canvasEl);
   }
 }
 
@@ -112,7 +140,8 @@ async function triggerCapture() {
 
 async function submitPhotos() {
   showScreen('analyzing');
-  document.getElementById('poll-status').textContent = 'Measuring key geometry…';
+  const statusEl = document.getElementById('poll-status');
+  if (statusEl) statusEl.textContent = 'Measuring key geometry…';
 
   const email = document.getElementById('email-input')?.value || '';
   const form  = new FormData();
@@ -125,18 +154,13 @@ async function submitPhotos() {
   try {
     const res  = await fetch('/analyze', { method: 'POST', body: form });
     const data = await res.json();
-
-    if (!res.ok) {
-      throw new Error(data.detail || 'Upload failed');
-    }
-
+    if (!res.ok) throw new Error(data.detail || 'Upload failed');
     orderId = data.order_id;
   } catch (err) {
     _showAnalysisError(err.message);
     return;
   }
 
-  // Poll for "identified" status → show confirm screen
   _pollForResults(orderId);
 }
 
@@ -144,8 +168,7 @@ async function submitPhotos() {
 
 function _pollForResults(orderId) {
   let attempts = 0;
-  const MAX_ATTEMPTS = 60;  // 60 × 2s = 2 minutes max
-
+  const MAX_ATTEMPTS = 60;
   const statusEl = document.getElementById('poll-status');
 
   pollTimer = setInterval(async () => {
@@ -164,15 +187,12 @@ function _pollForResults(orderId) {
 
       if (data.status === 'analyzing' || data.status === 'pending') return;
 
-      // Identify phase complete → show confirm screen
       if (data.status === 'identified') {
         clearInterval(pollTimer);
-        const identifyResult = data.identify_result || {};
-        enterConfirmScreen(orderId, identifyResult);
+        enterConfirmScreen(orderId, data.identify_result || {});
         return;
       }
 
-      // Measure phase still running
       if (data.status === 'measuring') return;
 
       clearInterval(pollTimer);
@@ -182,7 +202,6 @@ function _pollForResults(orderId) {
         return;
       }
 
-      // Final result
       showScreen('results');
       if (typeof renderResults === 'function') renderResults(data);
 
@@ -192,7 +211,7 @@ function _pollForResults(orderId) {
   }, 2000);
 }
 
-// ── Confirm Screen (Phase B: Measure) ────────────────────────────────────── //
+// ── Confirm Screen (Phase B: Measure) + Training Mode ────────────────────── //
 
 function enterConfirmScreen(orderId, identifyResult) {
   const candidates = identifyResult.candidates || [];
@@ -205,8 +224,9 @@ function enterConfirmScreen(orderId, identifyResult) {
     return;
   }
 
-  // Set subtitle based on whether stamp was detected or scores are tied
   const topCandidate = candidates[0];
+
+  // ── Subtitle ──────────────────────────────────────────────────────────── //
   const subtitleEl = document.getElementById('confirm-subtitle');
   if (subtitleEl) {
     if (topCandidate.stamp_confirmed) {
@@ -221,8 +241,19 @@ function enterConfirmScreen(orderId, identifyResult) {
     }
   }
 
-  // Build candidate rows
-  let html = '<div class="confirm-candidate-list">';
+  // ── System prediction badge ───────────────────────────────────────────── //
+  const measurements = identifyResult.measurements || {};
+  const predBadge = measurements.cut_count
+    ? `<div class="system-prediction">
+        System measured <strong>${measurements.cut_count} cuts</strong>,
+        spacing <strong>${(measurements.approx_spacing_mm || 0).toFixed(2)}mm</strong>,
+        first cut <strong>${(measurements.approx_first_cut_mm || 0).toFixed(2)}mm</strong>
+        → top match: <strong>${topCandidate.blank_code}</strong>
+       </div>`
+    : '';
+
+  // ── Candidate rows ────────────────────────────────────────────────────── //
+  let rowsHtml = '<div class="confirm-candidate-list">';
   candidates.forEach((c, i) => {
     const isTop    = i === 0;
     const desc     = c.reference_description ? _escHtml(c.reference_description) : '';
@@ -236,7 +267,7 @@ function enterConfirmScreen(orderId, identifyResult) {
       ? `<span class="confirm-stamp-badge">✓ Stamp read from key</span>`
       : '';
 
-    html += `
+    rowsHtml += `
       <div class="confirm-candidate${isTop ? ' top-pick selected' : ''}"
            data-blank="${_escHtml(c.blank_code)}"
            onclick="_selectCandidate('${_escHtml(c.blank_code)}')">
@@ -249,20 +280,27 @@ function enterConfirmScreen(orderId, identifyResult) {
         </div>
       </div>`;
   });
-  html += '</div>';
+  rowsHtml += '</div>';
 
-  container.innerHTML = html;
+  // ── "Other" training input ────────────────────────────────────────────── //
+  const otherHtml = `
+    <div class="training-other">
+      <label class="training-label">Not listed? Enter actual blank code:</label>
+      <input type="text" id="other-blank-input" class="other-blank-input"
+             placeholder="e.g. SC4, KW10, WR3"
+             oninput="_onOtherBlankInput(this.value)" />
+    </div>`;
 
-  // Pre-select top candidate
+  container.innerHTML = predBadge + rowsHtml + otherHtml;
+
   selectedConfirmBlank = topCandidate.blank_code;
 
   // Wire confirm button
   const confirmBtn = document.getElementById('btn-confirm-blank');
   if (confirmBtn) {
-    // Remove any previous listener by replacing the element
     const fresh = confirmBtn.cloneNode(true);
     confirmBtn.parentNode.replaceChild(fresh, confirmBtn);
-    fresh.addEventListener('click', () => _confirmAndMeasure(orderId));
+    fresh.addEventListener('click', () => _confirmAndMeasure(orderId, topCandidate.blank_code));
   }
 
   showScreen('confirm');
@@ -270,6 +308,10 @@ function enterConfirmScreen(orderId, identifyResult) {
 
 function _selectCandidate(blankCode) {
   selectedConfirmBlank = blankCode;
+  // Clear the "Other" text input when a card is tapped
+  const otherInput = document.getElementById('other-blank-input');
+  if (otherInput) otherInput.value = '';
+
   document.querySelectorAll('.confirm-candidate').forEach(el => {
     const isSelected = el.dataset.blank === blankCode;
     el.classList.toggle('selected', isSelected);
@@ -278,7 +320,28 @@ function _selectCandidate(blankCode) {
   });
 }
 
-async function _confirmAndMeasure(orderId) {
+function _onOtherBlankInput(value) {
+  const trimmed = value.trim().toUpperCase();
+  if (trimmed.length >= 2) {
+    // Deselect all candidate cards
+    document.querySelectorAll('.confirm-candidate').forEach(el => {
+      el.classList.remove('selected');
+      const radio = el.querySelector('.confirm-radio');
+      if (radio) radio.classList.remove('checked');
+    });
+    selectedConfirmBlank = trimmed;
+  } else if (!trimmed) {
+    // Restore top candidate if input is cleared
+    const topCard = document.querySelector('.confirm-candidate.top-pick');
+    if (topCard) {
+      topCard.classList.add('selected');
+      topCard.querySelector('.confirm-radio')?.classList.add('checked');
+      selectedConfirmBlank = topCard.dataset.blank;
+    }
+  }
+}
+
+async function _confirmAndMeasure(orderId, systemPrediction) {
   if (!selectedConfirmBlank) return;
 
   showScreen('analyzing');
@@ -288,6 +351,11 @@ async function _confirmAndMeasure(orderId) {
   try {
     const form = new FormData();
     form.append('confirmed_blank', selectedConfirmBlank);
+    // Log training data: what the system predicted vs what user selected
+    if (systemPrediction && systemPrediction !== selectedConfirmBlank) {
+      console.log(`[training] System predicted: ${systemPrediction}, User corrected to: ${selectedConfirmBlank}`);
+      form.append('system_prediction', systemPrediction);
+    }
 
     const res = await fetch(`/orders/${orderId}/confirm`, { method: 'POST', body: form });
     if (!res.ok) {
@@ -299,7 +367,6 @@ async function _confirmAndMeasure(orderId) {
     return;
   }
 
-  // Poll for final bitting result
   _pollForResults(orderId);
 }
 
@@ -334,7 +401,7 @@ function _resetThumbnails() {
   for (let i = 0; i < MAX_PHOTOS; i++) {
     const thumb = document.getElementById(`photo-thumb-${i}`);
     if (thumb) {
-      thumb.className = 'photo-thumb empty';
+      thumb.className = `photo-thumb empty${i >= 3 ? ' side2' : ''}`;
       thumb.textContent = (i + 1).toString();
     }
   }
