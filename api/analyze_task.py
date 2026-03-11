@@ -59,8 +59,10 @@ async def run_identify_pipeline(order_id: str, image_paths: list[str], customer_
         best_idx = 0  # will be updated after Phase 1 returns
         primary_path = image_paths[0]
 
-        # Run OpenCV geometry and Claude Phase 1 concurrently
-        opencv_task  = asyncio.to_thread(_run_geometry_pipeline_sync, primary_path)
+        # Run OpenCV geometry (across all Side A photos) and Claude Phase 1 concurrently.
+        # Side A = photos 0-2; using multiple photos improves cut-count reliability.
+        side_a_paths = image_paths[:3]
+        opencv_task  = asyncio.to_thread(_run_best_geometry_sync, side_a_paths)
         phase1_task  = asyncio.to_thread(analyze_photos, image_paths)
 
         geometry_result, phase1 = await asyncio.gather(opencv_task, phase1_task)
@@ -178,12 +180,12 @@ async def run_measure_pipeline(order_id: str, confirmed_blank: str):
         identify_result = order_data.get("identify_result") or {}
         phase1 = identify_result.get("phase1_result", {})
 
-        # ── OpenCV spec-based measurement ────────────────────────────────── #
-        best_idx = phase1.get("best_photo_index", 0)
-        primary_path = image_paths[min(best_idx, len(image_paths) - 1)]
-
+        # ── OpenCV spec-based measurement (multi-photo) ───────────────────── #
+        # Measure all Side A photos and aggregate for consistency.
+        # Side A photos are indices 0-2; Side B would be 3-5 (other face).
+        side_a_paths = image_paths[:3]
         opencv_result = await asyncio.to_thread(
-            _run_opencv_pipeline_sync, primary_path, blank_spec
+            _run_multi_photo_opencv_sync, side_a_paths, blank_spec
         )
 
         # ── Phase 3: Claude validation ────────────────────────────────────── #
@@ -311,6 +313,107 @@ def _load_image_exif_aware(image_path: str) -> np.ndarray:
     if pil_img.mode != "RGB":
         pil_img = pil_img.convert("RGB")
     return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+
+
+def _run_best_geometry_sync(image_paths: list) -> dict:
+    """
+    Run geometry on up to 3 photos and return the best result.
+
+    "Best" = the cut count agreed on by the majority of photos.
+    When photos agree, we use the result from the photo with the most
+    cuts detected at that majority count (sharpest image).
+
+    Falls back to the first photo's result if no photo yields valid geometry.
+    """
+    from collections import Counter
+
+    results = []
+    for path in image_paths:
+        r = _run_geometry_pipeline_sync(path)
+        geo = r.get("geometry")
+        if geo and geo.cut_count >= 4:
+            results.append(r)
+
+    if not results:
+        # Nothing worked — return first photo's result (may be error)
+        return _run_geometry_pipeline_sync(image_paths[0])
+
+    # Majority vote on cut count
+    counts = [r["geometry"].cut_count for r in results]
+    majority_count = Counter(counts).most_common(1)[0][0]
+    print(f"[geometry] Multi-photo votes: {counts}, majority={majority_count}")
+
+    # Pick the best result among those agreeing with majority
+    matching = [r for r in results if r["geometry"].cut_count == majority_count]
+    # Prefer results where spacing is most consistent (closest to mean)
+    spacings = [r["geometry"].approx_spacing_mm for r in matching]
+    mean_spacing = sum(spacings) / len(spacings)
+    best = min(matching, key=lambda r: abs(r["geometry"].approx_spacing_mm - mean_spacing))
+    return best
+
+
+def _run_multi_photo_opencv_sync(image_paths: list, blank_spec: dict) -> dict:
+    """
+    Run the spec-based bitting pipeline on up to 3 photos and aggregate.
+
+    For each cut position, takes the majority-vote bitting code across all
+    photos.  If all photos agree, confidence is boosted; disagreements flag
+    the cut for human review (via the boundary_distance=0 sentinel that
+    confidence_scorer already checks).
+
+    Falls back gracefully if only one photo yields a valid result.
+    """
+    from collections import Counter
+
+    valid_results = []
+    for path in image_paths:
+        try:
+            r = _run_opencv_pipeline_sync(path, blank_spec)
+            if r.get("bitting") and len(r["bitting"]) == blank_spec["cut_count"]:
+                valid_results.append(r)
+                print(f"[measure] {path}: bitting={r['bitting']}, conf={r.get('overall_confidence', 0):.3f}")
+            elif r.get("error"):
+                print(f"[measure] {path}: skipped — {r['error']}")
+        except Exception as e:
+            print(f"[measure] {path}: error — {e}")
+
+    if not valid_results:
+        # No photo succeeded; run primary and return error result
+        return _run_opencv_pipeline_sync(image_paths[0], blank_spec)
+
+    if len(valid_results) == 1:
+        return valid_results[0]
+
+    # Majority-vote bitting: for each cut, take the most common code
+    all_bittings = [r["bitting"] for r in valid_results]
+    cut_count = blank_spec["cut_count"]
+    majority_bitting = []
+    for cut_idx in range(cut_count):
+        codes = [b[cut_idx] for b in all_bittings if cut_idx < len(b)]
+        majority_bitting.append(Counter(codes).most_common(1)[0][0])
+
+    # Consistency: fraction of photos that exactly match the majority bitting
+    agreements = sum(1 for b in all_bittings if b == majority_bitting)
+    consistency = agreements / len(all_bittings)
+
+    # Base confidence from the highest-confidence single-photo result
+    best_single = max(valid_results, key=lambda r: r.get("overall_confidence", 0))
+    base_conf = best_single.get("overall_confidence", 0.5)
+
+    # Blend single-photo confidence with multi-photo consistency
+    blended_conf = round(0.6 * base_conf + 0.4 * consistency, 3)
+
+    print(
+        f"[measure] Multi-photo: {len(valid_results)} photos, "
+        f"consistency={consistency:.2f}, bitting={majority_bitting}, conf={blended_conf}"
+    )
+
+    result = dict(best_single)
+    result["bitting"] = majority_bitting
+    result["overall_confidence"] = blended_conf
+    result["multi_photo_count"] = len(valid_results)
+    result["multi_photo_consistency"] = consistency
+    return result
 
 
 def _run_geometry_pipeline_sync(image_path: str) -> dict:

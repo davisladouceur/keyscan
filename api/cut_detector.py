@@ -130,8 +130,9 @@ def measure_blade_geometry(
     # Use a low prominence threshold — shallow cuts should still be detected.
     # The spec-based measurement will then confirm depth accurately.
     min_prominence = max(2.0, profile_range * 0.05)
-    # Minimum distance: at least 2mm between cuts (most blanks space ≥ 3mm)
-    min_distance_px = max(int(2.0 * px_per_mm), 15)
+    # Minimum distance: 3mm between cuts. All blanks in our DB space ≥ 3.5mm,
+    # so this safely filters smoothing artifacts without missing real cuts.
+    min_distance_px = max(int(3.0 * px_per_mm), 15)
 
     peaks, properties = signal.find_peaks(
         profile_from_shoulder,
