@@ -7,6 +7,8 @@ Combines three signals:
   3. Multi-photo consistency (if multiple photos are provided)
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 import numpy as np

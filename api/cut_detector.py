@@ -12,6 +12,8 @@ FALLBACK METHOD — peak detection:
   smoothed edge profile using scipy's find_peaks.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 import cv2

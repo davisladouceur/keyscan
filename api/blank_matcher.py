@@ -18,6 +18,8 @@ misses or adds one cut), a ±1 cut_count fallback is tried with an
 added penalty of 1.0 to keep exact matches ranked above fallbacks.
 """
 
+from __future__ import annotations
+
 from api.blank_specs import get_blanks_by_cut_count
 
 # Maximum tolerable error in mm before a blank is excluded from candidates.

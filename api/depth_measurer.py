@@ -5,6 +5,8 @@ Combines the outputs of cut_detector.py with blank specifications to produce
 the bitting array that gets sent to the CNC machine.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 import numpy as np
